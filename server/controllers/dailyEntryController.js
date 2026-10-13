@@ -25,6 +25,20 @@ export const createDailyEntry = async (req, res) => {
 
     const entryDate = date || getLocalDateString();
     const entryTime = time || getLocalTimeString();
+    const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey;
+
+    // Prevent duplicate submission on network retries
+    if (idempotencyKey) {
+      const existing = await DailyEntry.findOne({ idempotencyKey });
+      if (existing) {
+        return res.status(200).json({
+          success: true,
+          message: 'Daily Entry already processed (duplicate submission prevented).',
+          data: existing,
+          duplicate: true
+        });
+      }
+    }
 
     // 2. Validate stock availability for all materials BEFORE committing any deductions
     const validatedDeductions = [];
@@ -39,7 +53,7 @@ export const createDailyEntry = async (req, res) => {
         const dbItemName = materialMapping[key];
         if (!dbItemName) continue;
 
-        const item = await Inventory.findOne({ itemName: dbItemName });
+        const item = await Inventory.findOne({ itemName: dbItemName, isArchived: { $ne: true } });
         if (!item) {
           return res.status(404).json({
             success: false,
@@ -70,50 +84,79 @@ export const createDailyEntry = async (req, res) => {
       });
     }
 
-    // 3. Atomically decrement stock and create transactions
-    for (const deduction of validatedDeductions) {
-      const updatedItem = await Inventory.findOneAndUpdate(
-        { _id: deduction.itemId, currentStock: { $gte: deduction.quantity } },
-        { $inc: { currentStock: -deduction.quantity } },
-        { new: true }
-      );
+    // 3. Atomically decrement stock and create transactions with all-or-nothing rollback consistency
+    const successfullyProcessed = [];
 
-      if (!updatedItem) {
-        return res.status(400).json({
-          success: false,
-          message: `Stock level conflict for ${deduction.itemName}. Please refresh and retry.`
+    try {
+      for (const deduction of validatedDeductions) {
+        const updatedItem = await Inventory.findOneAndUpdate(
+          { _id: deduction.itemId, currentStock: { $gte: deduction.quantity } },
+          { $inc: { currentStock: -deduction.quantity } },
+          { new: true }
+        );
+
+        if (!updatedItem) {
+          throw new Error(`Stock level conflict for ${deduction.itemName}. Insufficient stock during concurrent request.`);
+        }
+
+        const stockBefore = updatedItem.currentStock + deduction.quantity;
+        const stockAfter = updatedItem.currentStock;
+
+        // Generate audit transaction log with before/after tracking
+        const tx = await Transaction.create({
+          item: updatedItem._id,
+          quantity: deduction.quantity,
+          type: 'OUT',
+          stockBefore,
+          stockAfter,
+          user: careOf || req.user?.name || 'Technician',
+          date: entryDate,
+          time: entryTime,
+          remarks: `Daily Entry dispatch. Quality status: ${quality || 'GOOD'} | ${remarks || ''}`
+        });
+
+        successfullyProcessed.push({
+          itemId: deduction.itemId,
+          quantity: deduction.quantity,
+          txId: tx._id
         });
       }
 
-      // Generate audit transaction log
-      await Transaction.create({
-        item: updatedItem._id,
-        quantity: deduction.quantity,
-        type: 'OUT',
-        user: careOf || req.user?.name || 'Technician',
+      // 4. Save the Daily Entry Log
+      const newEntry = new DailyEntry({
         date: entryDate,
         time: entryTime,
-        remarks: `Daily Entry dispatch. Quality status: ${quality || 'GOOD'} | ${remarks || ''}`
+        careOf,
+        quality: quality || 'GOOD',
+        remarks,
+        materials,
+        idempotencyKey
+      });
+
+      await newEntry.save();
+
+      return res.status(201).json({ 
+        success: true, 
+        message: 'Daily Entry processed, stock levels updated automatically.',
+        data: newEntry 
+      });
+
+    } catch (operationErr) {
+      // Compensating Rollback: Revert any already-deducted inventory and delete created audit transactions
+      for (const item of successfullyProcessed) {
+        try {
+          await Inventory.findByIdAndUpdate(item.itemId, { $inc: { currentStock: item.quantity } });
+          await Transaction.findByIdAndDelete(item.txId);
+        } catch (rollbackErr) {
+          console.error('Rollback failure for item:', item.itemId, rollbackErr);
+        }
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: operationErr.message || 'Stock dispatch conflict. Changes rolled back safely.'
       });
     }
-
-    // 4. Save the Daily Entry Log
-    const newEntry = new DailyEntry({
-      date: entryDate,
-      time: entryTime,
-      careOf,
-      quality: quality || 'GOOD',
-      remarks,
-      materials
-    });
-
-    await newEntry.save();
-
-    res.status(201).json({ 
-      success: true, 
-      message: 'Daily Entry processed, stock levels updated automatically.',
-      data: newEntry 
-    });
 
   } catch (error) {
     res.status(500).json({ 

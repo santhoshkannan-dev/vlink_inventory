@@ -11,6 +11,7 @@ import reportRoutes from './routes/reportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import technicianRoutes from './routes/technicianRoutes.js';
+import transactionRoutes from './routes/transactionRoutes.js';
 import Inventory from './models/Inventory.js';
 import Technician from './models/Technician.js';
 import User from './models/User.js';
@@ -105,6 +106,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/technicians', technicianRoutes);
+app.use('/api/transactions', transactionRoutes);
 
 // Root & Health Check Ping Endpoints
 app.get('/', (req, res) => {

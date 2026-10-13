@@ -239,8 +239,11 @@ const runTests = async () => {
     const mockExcelRes = {
       headers: {},
       chunks: [],
+      statusCode: 200,
       setHeader(k, v) { this.headers[k] = v; },
       write(chunk) { this.chunks.push(chunk); },
+      status(code) { this.statusCode = code; return this; },
+      json(d) { this.jsonData = d; return this; },
       end() {}
     };
     await exportExcel(mockRequest({}), mockExcelRes);
@@ -251,9 +254,12 @@ const runTests = async () => {
     const mockPdfRes = {
       headers: {},
       chunks: [],
+      statusCode: 200,
       headersSent: false,
       setHeader(k, v) { this.headers[k] = v; },
       write(chunk) { this.chunks.push(chunk); },
+      status(code) { this.statusCode = code; return this; },
+      json(d) { this.jsonData = d; return this; },
       emit() {},
       on() { return this; },
       once() { return this; },

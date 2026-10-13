@@ -280,10 +280,10 @@ export const exportExcel = async (req, res) => {
     const historySheet = workbook.addWorksheet('Stock Movement History');
     const hTitle = historySheet.addRow(['VLink Networks — Stock Movement Audit History']);
     hTitle.getCell(1).font = { bold: true, size: 14, color: { argb: 'FF1E293B' } };
-    historySheet.mergeCells('A1:G1');
+    historySheet.mergeCells('A1:J1');
     historySheet.addRow([]);
 
-    const hHeaders = ['Date', 'Time', 'Type', 'Item Name', 'Quantity', 'Handled By', 'Remarks / Audit Note'];
+    const hHeaders = ['Txn ID', 'Date', 'Time', 'Type', 'Item Name', 'Quantity', 'Stock Before', 'Stock After', 'Handled By', 'Remarks / Audit Note'];
     const hHeaderRow = historySheet.addRow(hHeaders);
     hHeaderRow.eachCell((cell) => {
       cell.fill = headerFill;
@@ -293,12 +293,16 @@ export const exportExcel = async (req, res) => {
     hHeaderRow.height = 26;
 
     reportData.transactions.forEach((tx, idx) => {
+      const unit = tx.item?.unit || 'Nos';
       const row = historySheet.addRow([
+        tx.transactionId || '-',
         tx.date,
         tx.time,
         tx.type,
         tx.item?.itemName || 'Unknown Item',
-        `${tx.quantity} ${tx.item?.unit || 'Nos'}`,
+        `${tx.quantity} ${unit}`,
+        tx.stockBefore !== undefined && tx.stockBefore !== null ? `${tx.stockBefore} ${unit}` : '-',
+        tx.stockAfter !== undefined && tx.stockAfter !== null ? `${tx.stockAfter} ${unit}` : '-',
         tx.user || 'System',
         tx.remarks || '-'
       ]);
@@ -306,15 +310,15 @@ export const exportExcel = async (req, res) => {
       row.eachCell((cell, col) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
         cell.font = { size: 9, color: { argb: 'FF334155' } };
-        if (col === 3) {
+        if (col === 4) {
           cell.font = { bold: true, size: 9, color: { argb: tx.type === 'IN' ? 'FF059669' : 'FFDC2626' } };
         }
       });
     });
 
     historySheet.columns = [
-      { width: 14 }, { width: 12 }, { width: 10 }, { width: 26 },
-      { width: 16 }, { width: 22 }, { width: 40 }
+      { width: 20 }, { width: 14 }, { width: 12 }, { width: 10 }, { width: 26 },
+      { width: 14 }, { width: 14 }, { width: 14 }, { width: 20 }, { width: 36 }
     ];
 
     // Response headers
@@ -453,7 +457,7 @@ export const exportPDF = async (req, res) => {
       doc.fillColor('#0F172A').fontSize(12).font('Helvetica-Bold').text('DETAILED STOCK MOVEMENT AUDIT LOG', 40, txY);
       txY += 20;
 
-      const txColWidths = [60, 50, 45, 120, 50, 80, 105];
+      const txColWidths = [75, 52, 38, 115, 45, 75, 110];
       const txColX = [40];
       for (let i = 1; i < txColWidths.length; i++) {
         txColX.push(txColX[i - 1] + txColWidths[i - 1] + 2);
@@ -462,7 +466,7 @@ export const exportPDF = async (req, res) => {
       const drawTxHeader = (currY) => {
         doc.rect(40, currY, 520, 20).fill('#1E293B');
         doc.fillColor('#FFFFFF').fontSize(8).font('Helvetica-Bold');
-        const headers = ['Date', 'Time', 'Type', 'Item Name', 'Qty', 'Handled By', 'Remarks'];
+        const headers = ['Txn ID', 'Date', 'Type', 'Item Name', 'Qty', 'Handled By', 'Remarks'];
         headers.forEach((h, i) => {
           doc.text(h, txColX[i] + 3, currY + 6, { width: txColWidths[i] });
         });
@@ -482,9 +486,13 @@ export const exportPDF = async (req, res) => {
           doc.rect(40, txY - 2, 520, 16).fill('#F8FAFC');
         }
 
+        const txnDisplayId = tx.transactionId || (tx._id ? `TXN-${tx._id.toString().slice(-6).toUpperCase()}` : '-');
+
+        doc.fillColor('#2563EB').fontSize(7).font('Helvetica-Bold');
+        doc.text(txnDisplayId.substring(0, 16), txColX[0] + 3, txY + 2, { width: txColWidths[0] });
+
         doc.fillColor('#475569').fontSize(7.5).font('Helvetica');
-        doc.text(tx.date, txColX[0] + 3, txY + 2, { width: txColWidths[0] });
-        doc.text(tx.time, txColX[1] + 3, txY + 2, { width: txColWidths[1] });
+        doc.text(tx.date, txColX[1] + 3, txY + 2, { width: txColWidths[1] });
 
         doc.fillColor(tx.type === 'IN' ? '#059669' : '#DC2626').font('Helvetica-Bold');
         doc.text(tx.type, txColX[2] + 3, txY + 2, { width: txColWidths[2] });
@@ -492,7 +500,7 @@ export const exportPDF = async (req, res) => {
         doc.fillColor('#1E293B').font('Helvetica');
         doc.text((tx.item?.itemName || 'Item').substring(0, 24), txColX[3] + 3, txY + 2, { width: txColWidths[3] });
         doc.text(String(tx.quantity), txColX[4] + 3, txY + 2, { width: txColWidths[4] });
-        doc.text((tx.user || 'System').substring(0, 16), txColX[5] + 3, txY + 2, { width: txColWidths[5] });
+        doc.text((tx.user || 'System').substring(0, 15), txColX[5] + 3, txY + 2, { width: txColWidths[5] });
         doc.text((tx.remarks || '').substring(0, 25), txColX[6] + 3, txY + 2, { width: txColWidths[6] });
 
         txY += 16;

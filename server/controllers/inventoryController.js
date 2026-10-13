@@ -5,7 +5,12 @@ import { getLocalDateString, getLocalTimeString } from '../utils/dateUtils.js';
 // Get all inventory items with status calculations (Reference image_2.png)
 export const getInventory = async (req, res) => {
   try {
-    const items = await Inventory.find({});
+    const filter = {};
+    if (req.query.includeArchived !== 'true') {
+      filter.isArchived = { $ne: true };
+    }
+
+    const items = await Inventory.find(filter).sort({ itemName: 1 });
     
     // Dynamically flag thresholds on retrieval
     const processedItems = items.map(item => {
@@ -27,11 +32,26 @@ export const getInventory = async (req, res) => {
 // Handle Stock In (Increment stock + generate transactional audit log)
 export const processStockIn = async (req, res) => {
   try {
-    const { itemId, quantity, supplier, invoice, receivedBy, date, time, remarks } = req.body;
+    const { itemId, quantity, supplier, invoice, receivedBy, date, time, remarks, idempotencyKey: bodyKey } = req.body;
+    const idempotencyKey = req.headers['x-idempotency-key'] || bodyKey;
 
     const qty = Number(quantity);
     if (!qty || qty <= 0) {
       return res.status(400).json({ success: false, message: 'Stock-in quantity must be a positive number greater than 0.' });
+    }
+
+    // Check duplicate submission via idempotency key
+    if (idempotencyKey) {
+      const existingTx = await Transaction.findOne({ idempotencyKey }).populate('item');
+      if (existingTx) {
+        return res.status(200).json({
+          success: true,
+          message: 'Stock-in operation already processed (duplicate request prevented).',
+          data: existingTx.item,
+          transaction: existingTx,
+          duplicate: true
+        });
+      }
     }
 
     // Increment current stock atomically
@@ -45,24 +65,37 @@ export const processStockIn = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Inventory item not found.' });
     }
 
+    const stockBefore = updatedItem.currentStock - qty;
+    const stockAfter = updatedItem.currentStock;
     const txDate = date || getLocalDateString();
     const txTime = time || getLocalTimeString();
 
-    // Write to unalterable transaction ledger
-    await Transaction.create({
-      item: itemId,
-      quantity: qty,
-      type: 'IN',
-      user: receivedBy || req.user?.name || 'System',
-      date: txDate,
-      time: txTime,
-      remarks: `Vendor: ${supplier || 'N/A'} | Inv: ${invoice || 'N/A'} | ${remarks || ''}`
-    });
+    // Write to unalterable transaction ledger with before/after tracking
+    let tx;
+    try {
+      tx = await Transaction.create({
+        item: itemId,
+        quantity: qty,
+        type: 'IN',
+        stockBefore,
+        stockAfter,
+        idempotencyKey,
+        user: receivedBy || req.user?.name || 'System',
+        date: txDate,
+        time: txTime,
+        remarks: `Vendor: ${supplier || 'N/A'} | Inv: ${invoice || 'N/A'} | ${remarks || ''}`
+      });
+    } catch (txErr) {
+      // Revert atomic stock increment to guarantee consistency if transaction record write fails
+      await Inventory.findByIdAndUpdate(itemId, { $inc: { currentStock: -qty } });
+      throw txErr;
+    }
 
     res.status(200).json({
       success: true,
       message: `${qty} ${updatedItem.unit} added to ${updatedItem.itemName} successfully.`,
-      data: updatedItem
+      data: updatedItem,
+      transaction: tx
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -72,14 +105,29 @@ export const processStockIn = async (req, res) => {
 // Handle Stock Out (Decrement stock + generate transactional audit log)
 export const processStockOut = async (req, res) => {
   try {
-    const { itemId, quantity, employee, careOf, purpose, date, time, remarks } = req.body;
+    const { itemId, quantity, employee, careOf, purpose, date, time, remarks, idempotencyKey: bodyKey } = req.body;
+    const idempotencyKey = req.headers['x-idempotency-key'] || bodyKey;
 
     const qty = Number(quantity);
     if (!qty || qty <= 0) {
       return res.status(400).json({ success: false, message: 'Stock-out quantity must be a positive number greater than 0.' });
     }
 
-    // Decrement current stock atomically only if stock >= qty
+    // Check duplicate submission via idempotency key
+    if (idempotencyKey) {
+      const existingTx = await Transaction.findOne({ idempotencyKey }).populate('item');
+      if (existingTx) {
+        return res.status(200).json({
+          success: true,
+          message: 'Stock-out operation already processed (duplicate request prevented).',
+          data: existingTx.item,
+          transaction: existingTx,
+          duplicate: true
+        });
+      }
+    }
+
+    // Decrement current stock atomically only if stock >= qty (strictly prevents negative stock)
     const updatedItem = await Inventory.findOneAndUpdate(
       { _id: itemId, currentStock: { $gte: qty } },
       { $inc: { currentStock: -qty } },
@@ -97,24 +145,37 @@ export const processStockOut = async (req, res) => {
       });
     }
 
+    const stockBefore = updatedItem.currentStock + qty;
+    const stockAfter = updatedItem.currentStock;
     const txDate = date || getLocalDateString();
     const txTime = time || getLocalTimeString();
 
-    // Write to unalterable transaction ledger
-    await Transaction.create({
-      item: itemId,
-      quantity: qty,
-      type: 'OUT',
-      user: employee || careOf || req.user?.name || 'System',
-      date: txDate,
-      time: txTime,
-      remarks: `Purpose: ${purpose || 'General Dispatch'} | ${remarks || ''}`
-    });
+    // Write to unalterable transaction ledger with before/after tracking
+    let tx;
+    try {
+      tx = await Transaction.create({
+        item: itemId,
+        quantity: qty,
+        type: 'OUT',
+        stockBefore,
+        stockAfter,
+        idempotencyKey,
+        user: employee || careOf || req.user?.name || 'System',
+        date: txDate,
+        time: txTime,
+        remarks: `Purpose: ${purpose || 'General Dispatch'} | ${remarks || ''}`
+      });
+    } catch (txErr) {
+      // Revert atomic stock decrement to guarantee consistency if transaction record write fails
+      await Inventory.findByIdAndUpdate(itemId, { $inc: { currentStock: qty } });
+      throw txErr;
+    }
 
     res.status(200).json({
       success: true,
       message: `${qty} ${updatedItem.unit} issued from ${updatedItem.itemName} successfully.`,
-      data: updatedItem
+      data: updatedItem,
+      transaction: tx
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -124,7 +185,7 @@ export const processStockOut = async (req, res) => {
 // Get low stock alerts (flat array for header notifications)
 export const getAlerts = async (req, res) => {
   try {
-    const items = await Inventory.find({});
+    const items = await Inventory.find({ isArchived: { $ne: true } });
     const alerts = items.filter(item => item.currentStock <= item.minimumStock);
     res.status(200).json(alerts);
   } catch (error) {
@@ -145,6 +206,10 @@ export const createInventoryItem = async (req, res) => {
     const initialStock = Number(currentStock) || 0;
     const minStock = Number(minimumStock) || 0;
 
+    if (initialStock < 0 || minStock < 0) {
+      return res.status(400).json({ success: false, message: 'Stock numbers cannot be negative.' });
+    }
+
     const newItem = await Inventory.create({
       itemName,
       category,
@@ -154,12 +219,14 @@ export const createInventoryItem = async (req, res) => {
       description
     });
 
-    // Write a system-level transaction log for auditing
+    // Write a system-level transaction log for initial intake auditing
     if (initialStock > 0) {
       await Transaction.create({
         item: newItem._id,
         quantity: initialStock,
         type: 'IN',
+        stockBefore: 0,
+        stockAfter: initialStock,
         user: req.user?.name || 'System',
         date: getLocalDateString(),
         time: getLocalTimeString(),
@@ -192,6 +259,7 @@ export const updateInventoryItem = async (req, res) => {
     }
 
     const stockDiff = newStock - existingItem.currentStock;
+    const stockBefore = existingItem.currentStock;
 
     existingItem.itemName = itemName || existingItem.itemName;
     existingItem.category = category || existingItem.category;
@@ -202,12 +270,14 @@ export const updateInventoryItem = async (req, res) => {
 
     await existingItem.save();
 
-    // If stock level was adjusted, log an audit transaction
+    // If stock level was manually adjusted by Admin, log an audit transaction
     if (stockDiff !== 0) {
       await Transaction.create({
         item: existingItem._id,
         quantity: Math.abs(stockDiff),
         type: stockDiff > 0 ? 'IN' : 'OUT',
+        stockBefore,
+        stockAfter: newStock,
         user: req.user?.name || 'Administrator',
         date: getLocalDateString(),
         time: getLocalTimeString(),
@@ -221,24 +291,39 @@ export const updateInventoryItem = async (req, res) => {
   }
 };
 
-// Delete an inventory item (Preserving immutable audit transactions)
+// Delete or Archive an inventory item (Preserves historical transactions)
 export const deleteInventoryItem = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const deletedItem = await Inventory.findByIdAndDelete(id);
-
-    if (!deletedItem) {
+    const item = await Inventory.findById(id);
+    if (!item) {
       return res.status(404).json({ success: false, message: 'Inventory item not found.' });
     }
 
-    // CRITICAL: We preserve Transaction records so audit history is never erased.
+    // Check if historical transactions exist for this item
+    const hasTransactions = await Transaction.exists({ item: id });
 
+    if (hasTransactions) {
+      // Archive item to preserve historical audit trail & report integrity
+      item.isArchived = true;
+      item.archivedAt = new Date();
+      await item.save();
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Item has historical stock movements and has been safely archived to preserve the audit trail.',
+        archived: true
+      });
+    }
+
+    // If no transactions exist, safe to permanently delete
+    await Inventory.findByIdAndDelete(id);
     res.status(200).json({ success: true, message: 'Inventory item deleted successfully.' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
 
 
 

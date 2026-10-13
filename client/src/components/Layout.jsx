@@ -18,7 +18,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Menu,
-  X
+  X,
+  History
 } from 'lucide-react';
 
 export default function Layout({ children }) {
@@ -81,6 +82,7 @@ export default function Layout({ children }) {
     { name: 'Stock In', icon: ArrowDownLeft, path: '/stock-in', roles: ['Admin'] },       // ◄ Admin Only
     { name: 'Stock Out', icon: ArrowUpRight, path: '/stock-out', roles: ['Admin', 'Staff'] },
     { name: 'Daily Entry', icon: ClipboardEdit, path: '/daily-entry', roles: ['Admin', 'Staff'] },
+    { name: 'Stock History', icon: History, path: '/history', roles: ['Admin', 'Staff'] },
     { name: 'Reports', icon: BarChart3, path: '/reports', roles: ['Admin'] },             // ◄ Admin Only
     { name: 'Users', icon: Users, path: '/users', roles: ['Admin'] },                     // ◄ Admin Only
     { name: 'Settings', icon: Settings, path: '/settings', roles: ['Admin', 'Staff'] },

@@ -12,19 +12,19 @@ import { protect, authorize } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// View inventory catalog items
-router.get('/', protect, getInventory);
+// View inventory catalog items (Allowed for both Admin and Staff)
+router.get('/', protect, authorize('Admin', 'Staff'), getInventory);
 
-// Create, Update, Delete inventory catalog items (Allowed for both Admin and Staff)
-router.post('/', protect, createInventoryItem);
-router.put('/:id', protect, updateInventoryItem);
-router.delete('/:id', protect, deleteInventoryItem);
+// ONLY Admins can create, update, or delete/archive catalog items
+router.post('/', protect, authorize('Admin'), createInventoryItem);
+router.put('/:id', protect, authorize('Admin'), updateInventoryItem);
+router.delete('/:id', protect, authorize('Admin'), deleteInventoryItem);
 
 // ONLY Admins can process bulk Stock In vendor entries
 router.post('/stock-in', protect, authorize('Admin'), processStockIn);
 
 // Both Admin and Staff can process stock out and view alerts
-router.get('/alerts', protect, getAlerts);
-router.post('/stock-out', protect, processStockOut);
+router.get('/alerts', protect, authorize('Admin', 'Staff'), getAlerts);
+router.post('/stock-out', protect, authorize('Admin', 'Staff'), processStockOut);
 
 export default router;

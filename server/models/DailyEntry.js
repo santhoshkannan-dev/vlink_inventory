@@ -15,7 +15,8 @@ const dailyEntrySchema = new mongoose.Schema({
     stb: { type: Number, default: 0 },
     modem: { type: Number, default: 0 },
     cable: { type: Number, default: 0 } // Represented in meters
-  }
+  },
+  idempotencyKey: { type: String, sparse: true, index: true }
 }, { timestamps: true });
 
 export default mongoose.model('DailyEntry', dailyEntrySchema);

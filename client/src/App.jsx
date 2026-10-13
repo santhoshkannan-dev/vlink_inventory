@@ -13,6 +13,7 @@ import StockIn from './pages/StockIn';
 import StockOut from './pages/StockOut';
 import Users from './pages/Users';
 import Settings from './pages/Settings';
+import StockHistory from './pages/StockHistory';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user } = useContext(AuthContext);
@@ -75,6 +76,12 @@ const AppContent = () => {
           <Route path="/settings" element={
             <ProtectedRoute allowedRoles={['Admin', 'Staff']}>
               <Settings />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/history" element={
+            <ProtectedRoute allowedRoles={['Admin', 'Staff']}>
+              <StockHistory />
             </ProtectedRoute>
           } />
 

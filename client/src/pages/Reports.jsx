@@ -228,31 +228,39 @@ export default function Reports() {
           <span>Showing Live Pipeline Compilations</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full min-w-[900px] text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-400 font-bold uppercase tracking-wider text-[9px] border-b border-slate-100">
-                <th className="py-2.5 px-4 text-slate-600">Item Code (SKU)</th>
-                <th className="py-2.5 px-4 text-slate-600">Product Description</th>
-                <th className="py-2.5 px-4 text-right text-slate-600">Qty In</th>
-                <th className="py-2.5 px-4 text-right text-slate-600">Qty Out</th>
-                <th className="py-2.5 px-4 text-right text-slate-600">Net Change</th>
-                <th className="py-2.5 px-4 text-slate-600">Last Employee</th>
-                <th className="py-2.5 px-4 text-center text-slate-600">Status</th>
+                <th className="py-2.5 px-4 text-slate-600 whitespace-nowrap">Item Code (SKU)</th>
+                <th className="py-2.5 px-4 text-slate-600 whitespace-nowrap">Product Description</th>
+                <th className="py-2.5 px-4 text-right text-slate-600 whitespace-nowrap">Qty In</th>
+                <th className="py-2.5 px-4 text-center text-slate-600 whitespace-nowrap">Last Stock In Date</th>
+                <th className="py-2.5 px-4 text-right text-slate-600 whitespace-nowrap">Qty Out</th>
+                <th className="py-2.5 px-4 text-center text-slate-600 whitespace-nowrap">Last Stock Out Date</th>
+                <th className="py-2.5 px-4 text-right text-slate-600 whitespace-nowrap">Net Change</th>
+                <th className="py-2.5 px-4 text-slate-600 whitespace-nowrap">Last Employee</th>
+                <th className="py-2.5 px-4 text-center text-slate-600 whitespace-nowrap">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-[11px]">
               {summary?.rows && summary.rows.length > 0 ? (
                 summary.rows.map((row, idx) => (
                   <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3 px-4 font-bold text-blue-600">{row.sku}</td>
-                    <td className="py-3 px-4 font-bold text-slate-800">{row.itemName}</td>
-                    <td className="py-3 px-4 text-right text-slate-500 font-mono">{row.qtyIn}</td>
-                    <td className="py-3 px-4 text-right text-rose-600 font-bold font-mono">{row.qtyOut}</td>
-                    <td className={`py-3 px-4 text-right font-bold font-mono ${
+                    <td className="py-3 px-4 font-bold text-blue-600 whitespace-nowrap">{row.sku}</td>
+                    <td className="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">{row.itemName}</td>
+                    <td className="py-3 px-4 text-right text-slate-500 font-mono whitespace-nowrap">{row.qtyIn}</td>
+                    <td className="py-3 px-4 text-center font-medium text-emerald-700 font-mono text-[11px] whitespace-nowrap">
+                      {row.lastStockInDate || '—'}
+                    </td>
+                    <td className="py-3 px-4 text-right text-rose-600 font-bold font-mono whitespace-nowrap">{row.qtyOut}</td>
+                    <td className="py-3 px-4 text-center font-medium text-slate-600 font-mono text-[11px] whitespace-nowrap">
+                      {row.lastStockOutDate || '—'}
+                    </td>
+                    <td className={`py-3 px-4 text-right font-bold font-mono whitespace-nowrap ${
                       row.netChange.startsWith('+') ? 'text-emerald-600' : 'text-slate-700'
                     }`}>{row.netChange}</td>
-                    <td className="py-3 px-4 font-medium text-slate-600">{row.lastEmployee}</td>
-                    <td className="py-3 px-4 text-center">
+                    <td className="py-3 px-4 font-medium text-slate-600 whitespace-nowrap">{row.lastEmployee}</td>
+                    <td className="py-3 px-4 text-center whitespace-nowrap">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-extrabold font-mono tracking-wide ${
                         row.status === 'OPTIMAL' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
                         row.status === 'LOW STOCK' ? 'bg-amber-50 border-amber-200 text-amber-700' :
@@ -263,7 +271,7 @@ export default function Reports() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="py-8 text-center text-slate-400 font-medium">
+                  <td colSpan="9" className="py-8 text-center text-slate-400 font-medium">
                     No matching movements filtered inside current view pipeline.
                   </td>
                 </tr>

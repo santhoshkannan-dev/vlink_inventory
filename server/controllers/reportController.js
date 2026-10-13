@@ -2,6 +2,7 @@ import Inventory from '../models/Inventory.js';
 import Transaction from '../models/Transaction.js';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
+import { formatTransactionDateTime, getTransactionTimestamp, getLocalDateString, getLocalTimeString } from '../utils/dateUtils.js';
 
 // Helper to aggregate report data using Transaction ledger
 const getAggregatedData = async (filters) => {
@@ -44,7 +45,11 @@ const getAggregatedData = async (filters) => {
       category: item.category,
       unit: item.unit,
       qtyIn: 0,
+      lastStockInDate: null,
+      lastStockInTimestamp: 0,
       qtyOut: 0,
+      lastStockOutDate: null,
+      lastStockOutTimestamp: 0,
       netChange: 0,
       lastEmployee: 'N/A',
       lastTimestamp: 0,
@@ -57,16 +62,25 @@ const getAggregatedData = async (filters) => {
   // Aggregate from Transaction ledger
   transactions.forEach(t => {
     if (!t.item) return;
+    // Exclude cancelled/failed/invalid transactions according to existing business rules
+    if (t.status === 'CANCELLED' || t.status === 'FAILED' || t.isCancelled || !t.quantity || t.quantity <= 0) {
+      return;
+    }
     const idStr = t.item._id.toString();
     if (reportMap[idStr]) {
+      const ts = getTransactionTimestamp(t);
       if (t.type === 'IN') {
         reportMap[idStr].qtyIn += t.quantity;
-      } else {
+        if (ts >= reportMap[idStr].lastStockInTimestamp) {
+          reportMap[idStr].lastStockInTimestamp = ts;
+          reportMap[idStr].lastStockInDate = formatTransactionDateTime(t.date, t.time, t.createdAt);
+        }
+      } else if (t.type === 'OUT') {
         reportMap[idStr].qtyOut += t.quantity;
-        const ts = new Date(t.createdAt).getTime() || 0;
-        if (ts > reportMap[idStr].lastTimestamp) {
-          reportMap[idStr].lastEmployee = t.user;
-          reportMap[idStr].lastTimestamp = ts;
+        if (ts >= reportMap[idStr].lastStockOutTimestamp) {
+          reportMap[idStr].lastStockOutTimestamp = ts;
+          reportMap[idStr].lastStockOutDate = formatTransactionDateTime(t.date, t.time, t.createdAt);
+          reportMap[idStr].lastEmployee = t.user || 'System';
         }
       }
     }
@@ -148,16 +162,19 @@ export const exportExcel = async (req, res) => {
     // Title Section
     const titleRow = worksheet.addRow(['VLink Networks — Inventory Management System']);
     titleRow.getCell(1).font = { bold: true, size: 16, color: { argb: 'FF1E293B' } };
-    worksheet.mergeCells('A1:H1');
+    worksheet.mergeCells('A1:J1');
 
     const subtitleRow = worksheet.addRow(['Aggregated Material Usage Summary']);
     subtitleRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF64748B' } };
-    worksheet.mergeCells('A2:H2');
+    worksheet.mergeCells('A2:J2');
 
     worksheet.addRow([]);
 
-    // Filter Info
+    // Filter Info & Timestamp
     const filterStyle = { font: { size: 10, color: { argb: 'FF475569' } } };
+    const genTimestamp = formatTransactionDateTime(getLocalDateString(), getLocalTimeString(), new Date());
+    const r0 = worksheet.addRow([`Report Generated: ${genTimestamp || new Date().toLocaleString()}`]);
+    r0.getCell(1).font = { italic: true, size: 9, color: { argb: 'FF64748B' } };
     const r1 = worksheet.addRow([`Date Range: ${filters.startDate || 'All Time'} — ${filters.endDate || 'All Time'}`]);
     r1.getCell(1).font = filterStyle.font;
     const r2 = worksheet.addRow([`Technician: ${filters.employee || 'All'}   |   Category: ${filters.category || 'All'}`]);
@@ -180,7 +197,18 @@ export const exportExcel = async (req, res) => {
     worksheet.addRow([]);
 
     // Header Row
-    const headers = ['Item Code (SKU)', 'Product Description', 'Category', 'Qty In', 'Qty Out', 'Net Change', 'Last Employee', 'Status'];
+    const headers = [
+      'Item Code (SKU)',
+      'Product Description',
+      'Category',
+      'Qty In',
+      'Last Stock In Date',
+      'Qty Out',
+      'Last Stock Out Date',
+      'Net Change',
+      'Last Employee',
+      'Status'
+    ];
     const headerRow = worksheet.addRow(headers);
     const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
     const headerFont = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -200,18 +228,30 @@ export const exportExcel = async (req, res) => {
     // Data Rows
     reportData.rows.forEach((row, idx) => {
       const dataRow = worksheet.addRow([
-        row.sku, row.itemName, row.category, row.qtyIn, row.qtyOut, row.netChange, row.lastEmployee, row.status
+        row.sku,
+        row.itemName,
+        row.category,
+        row.qtyIn,
+        row.lastStockInDate || '—',
+        row.qtyOut,
+        row.lastStockOutDate || '—',
+        row.netChange,
+        row.lastEmployee,
+        row.status
       ]);
       const bgColor = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
-      dataRow.eachCell((cell) => {
+      dataRow.eachCell((cell, colNum) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
         cell.font = { size: 10, color: { argb: 'FF334155' } };
-        cell.alignment = { vertical: 'middle' };
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: (colNum === 4 || colNum === 6 || colNum === 8) ? 'right' : (colNum === 5 || colNum === 7 || colNum === 10) ? 'center' : 'left'
+        };
         cell.border = {
           bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }
         };
       });
-      const statusCell = dataRow.getCell(8);
+      const statusCell = dataRow.getCell(10);
       if (row.status === 'OPTIMAL') {
         statusCell.font = { bold: true, size: 10, color: { argb: 'FF059669' } };
       } else if (row.status === 'LOW STOCK') {
@@ -222,8 +262,16 @@ export const exportExcel = async (req, res) => {
     });
 
     worksheet.columns = [
-      { width: 20 }, { width: 28 }, { width: 20 }, { width: 16 },
-      { width: 16 }, { width: 16 }, { width: 22 }, { width: 16 }
+      { width: 20 }, // SKU
+      { width: 28 }, // Description
+      { width: 18 }, // Category
+      { width: 14 }, // Qty In
+      { width: 24 }, // Last Stock In Date
+      { width: 14 }, // Qty Out
+      { width: 24 }, // Last Stock Out Date
+      { width: 16 }, // Net Change
+      { width: 20 }, // Last Employee
+      { width: 16 }  // Status
     ];
 
     // ==========================================
@@ -306,10 +354,12 @@ export const exportPDF = async (req, res) => {
     doc.moveDown(3);
     const afterHeader = 100;
 
-    // Filter Info
+    // Filter Info & Timestamp
     doc.fillColor('#475569').fontSize(9).font('Helvetica');
     doc.text(`Date Range: ${filters.startDate || 'All Time'} to ${filters.endDate || 'All Time'}`, 40, afterHeader);
     doc.text(`Technician: ${filters.employee || 'All'}   |   Category: ${filters.category || 'All'}`, 40, afterHeader + 14);
+    const pdfGenTime = formatTransactionDateTime(getLocalDateString(), getLocalTimeString(), new Date());
+    doc.fillColor('#64748B').fontSize(8).text(`Generated: ${pdfGenTime || new Date().toLocaleString()}`, 380, afterHeader, { width: 180, align: 'right' });
 
     // KPI Cards
     const kpiY = afterHeader + 36;
@@ -333,7 +383,8 @@ export const exportPDF = async (req, res) => {
 
     // Table 1: Aggregated Summary
     const tableTop = kpiY + 62;
-    const colWidths = [70, 100, 55, 55, 65, 85, 60];
+    // 9 Columns: SKU, Description, Qty In, Last Stock In, Qty Out, Last Stock Out, Net Change, Last Employee, Status
+    const colWidths = [52, 76, 32, 68, 32, 68, 42, 66, 48];
     const colX = [40];
     for (let i = 1; i < colWidths.length; i++) {
       colX.push(colX[i - 1] + colWidths[i - 1] + 4);
@@ -342,10 +393,11 @@ export const exportPDF = async (req, res) => {
     const drawTableHeader = (y, title = 'MATERIAL USAGE SUMMARY') => {
       doc.fillColor('#0F172A').fontSize(9).font('Helvetica-Bold').text(title, 40, y - 14);
       doc.rect(40, y, 520, 20).fill('#1E293B');
-      doc.fillColor('#FFFFFF').fontSize(8).font('Helvetica-Bold');
-      const headers = ['SKU', 'Description', 'Qty In', 'Qty Out', 'Net Change', 'Last Employee', 'Status'];
+      doc.fillColor('#FFFFFF').fontSize(7.5).font('Helvetica-Bold');
+      const headers = ['SKU', 'Description', 'Qty In', 'Last Stock In', 'Qty Out', 'Last Stock Out', 'Net Change', 'Last Employee', 'Status'];
       headers.forEach((h, i) => {
-        doc.text(h, colX[i] + 4, y + 6, { width: colWidths[i], align: i >= 2 && i <= 4 ? 'right' : 'left' });
+        const align = (i === 2 || i === 4 || i === 6) ? 'right' : (i === 3 || i === 5 || i === 8) ? 'center' : 'left';
+        doc.text(h, colX[i] + 2, y + 6, { width: colWidths[i], align });
       });
       return y + 24;
     };
@@ -363,24 +415,33 @@ export const exportPDF = async (req, res) => {
         doc.rect(40, y - 2, 520, 18).fill('#F8FAFC');
       }
 
-      doc.fillColor('#334155').fontSize(8).font('Helvetica');
-      doc.text(row.sku, colX[0] + 4, y + 2, { width: colWidths[0] });
-      doc.text(row.itemName.substring(0, 20), colX[1] + 4, y + 2, { width: colWidths[1] });
-      doc.text(row.qtyIn, colX[2] + 4, y + 2, { width: colWidths[2], align: 'right' });
-
+      doc.fillColor('#334155').fontSize(6.8).font('Helvetica');
+      // 0: SKU
+      doc.text(row.sku, colX[0] + 2, y + 3, { width: colWidths[0] });
+      // 1: Description
+      doc.text(row.itemName.substring(0, 16), colX[1] + 2, y + 3, { width: colWidths[1] });
+      // 2: Qty In
+      doc.text(row.qtyIn, colX[2] + 2, y + 3, { width: colWidths[2], align: 'right' });
+      // 3: Last Stock In Date
+      doc.fillColor('#059669').font('Helvetica');
+      doc.text(row.lastStockInDate || '—', colX[3] + 2, y + 3, { width: colWidths[3], align: 'center' });
+      // 4: Qty Out
       doc.fillColor('#DC2626').font('Helvetica-Bold');
-      doc.text(row.qtyOut, colX[3] + 4, y + 2, { width: colWidths[3], align: 'right' });
-
+      doc.text(row.qtyOut, colX[4] + 2, y + 3, { width: colWidths[4], align: 'right' });
+      // 5: Last Stock Out Date
+      doc.fillColor('#475569').font('Helvetica');
+      doc.text(row.lastStockOutDate || '—', colX[5] + 2, y + 3, { width: colWidths[5], align: 'center' });
+      // 6: Net Change
       const netColor = row.netChange.startsWith('+') ? '#059669' : '#334155';
       doc.fillColor(netColor).font('Helvetica-Bold');
-      doc.text(row.netChange, colX[4] + 4, y + 2, { width: colWidths[4], align: 'right' });
-
+      doc.text(row.netChange, colX[6] + 2, y + 3, { width: colWidths[6], align: 'right' });
+      // 7: Last Employee
       doc.fillColor('#475569').font('Helvetica');
-      doc.text(row.lastEmployee, colX[5] + 4, y + 2, { width: colWidths[5] });
-
+      doc.text((row.lastEmployee || 'N/A').substring(0, 14), colX[7] + 2, y + 3, { width: colWidths[7] });
+      // 8: Status
       const statusColor = row.status === 'OPTIMAL' ? '#059669' : row.status === 'LOW STOCK' ? '#D97706' : '#DC2626';
       doc.fillColor(statusColor).font('Helvetica-Bold');
-      doc.text(row.status, colX[6] + 4, y + 2, { width: colWidths[6] });
+      doc.text(row.status, colX[8] + 2, y + 3, { width: colWidths[8], align: 'center' });
 
       y += 18;
     });

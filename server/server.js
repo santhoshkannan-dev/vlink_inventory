@@ -21,41 +21,78 @@ connectDB();
 const app = express();
 
 const allowedOrigins = [
+  'https://vlink-inventory.vercel.app',
   'http://localhost:5173',
   'http://localhost:3000',
   process.env.FRONTEND_URL
-].filter(Boolean);
+].filter(Boolean).map(o => o.replace(/\/+$/, ''));
 
-app.use(cors({
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Allow non-browser requests (curl, postman, server-to-server)
+  const normalized = origin.replace(/\/+$/, '');
+
+  // Exact match with configured origins
+  if (allowedOrigins.includes(normalized)) return true;
+
+  // Allow Vercel preview deployments (https://vlink-inventory-*.vercel.app)
+  if (/^https:\/\/vlink-inventory[a-z0-9-]*\.vercel\.app$/.test(normalized)) return true;
+
+  // Allow local development origins
+  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) {
+    return true;
+  }
+
+  return false;
+};
+
+const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, postman) or matching allowed origins
-    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*') || process.env.NODE_ENV !== 'production') {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
-      callback(new Error(`Blocked by CORS policy: Origin ${origin} not allowed`));
+      // Pass false instead of Error to avoid crashing Express preflight into a 500 error
+      callback(null, false);
     }
   },
-  credentials: true
-}));
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Disposition']
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Enable pre-flight for all routes
 app.use(express.json());
 
-// Auto-seed default admin user if database is fresh
+// Ensure default admin & staff accounts exist while preserving all existing users
 const seedDefaultData = async () => {
   try {
-    const userCount = await User.countDocuments();
-    if (userCount === 0) {
-      const defaultAdminPass = process.env.ADMIN_DEFAULT_PASSWORD || 'adminpassword123';
-      console.log('🌱 Database is empty. Seeding default administrator account...');
+    const defaultAdminPass = process.env.ADMIN_DEFAULT_PASSWORD || 'adminpassword123';
+    const adminExists = await User.findOne({ email: 'admin@vlink.com' });
+    if (!adminExists) {
+      console.log('🌱 Seeding administrator account (admin@vlink.com)...');
       await User.create({
         name: 'Systems Administrator',
         email: 'admin@vlink.com',
         password: defaultAdminPass,
         role: 'Admin'
       });
-      console.log('✅ Administrator account seeding completed. Login email: admin@vlink.com');
+      console.log('✅ Administrator account ready. Email: admin@vlink.com');
+    }
+
+    const staffExists = await User.findOne({ email: 'staff@vlink.com' });
+    if (!staffExists) {
+      console.log('🌱 Seeding staff account (staff@vlink.com)...');
+      await User.create({
+        name: 'Staff Member',
+        email: 'staff@vlink.com',
+        password: 'staffpassword123',
+        role: 'Staff'
+      });
+      console.log('✅ Staff account ready. Email: staff@vlink.com');
     }
   } catch (err) {
-    console.error('Auto-seeding error:', err.message);
+    console.error('Account verification error:', err.message);
   }
 };
 seedDefaultData();

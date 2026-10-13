@@ -15,22 +15,20 @@ const runValidationTests = async () => {
     // 1. Establish database connection (triggers in-memory MongoDB replica set)
     await connectDB();
 
-    // Clear and Seed
-    console.log('Seeding verification entries...');
-    await User.deleteMany();
-    await Inventory.deleteMany();
-    await DailyEntry.deleteMany();
-    await Transaction.deleteMany();
+    // Use or create isolated test verifier user
+    let admin = await User.findOne({ email: 'verifier@vlink.com' });
+    if (!admin) {
+      admin = await User.create({
+        name: 'Admin Verifier',
+        email: 'verifier@vlink.com',
+        password: 'verify',
+        role: 'Admin'
+      });
+    }
 
-    const admin = await User.create({
-      name: 'Admin Verifier',
-      email: 'verifier@vlink.com',
-      password: 'verify',
-      role: 'Admin'
-    });
-
+    const testTimestamp = Date.now();
     const nodeItem = await Inventory.create({
-      itemName: 'Home Node (FTTH)',
+      itemName: 'Home Node Test ' + testTimestamp,
       category: 'Terminal Equipment',
       unit: 'Units',
       currentStock: 10,
@@ -39,7 +37,7 @@ const runValidationTests = async () => {
     });
 
     const cableItem = await Inventory.create({
-      itemName: 'Fiber Cable',
+      itemName: 'Fiber Cable Test ' + testTimestamp,
       category: 'Infrastructure',
       unit: 'Meters',
       currentStock: 100,
@@ -145,6 +143,10 @@ const runValidationTests = async () => {
 
     const passedTestB = checkNodeStockB.currentStock === 5 && checkCableStockB.currentStock === 70;
     console.log(`=> Test Case B (Successful Atomic Deductions): ${passedTestB ? 'PASSED ✅' : 'FAILED ❌'}`);
+
+    // Clean up temporary test items
+    await Inventory.findByIdAndDelete(nodeItem._id);
+    await Inventory.findByIdAndDelete(cableItem._id);
 
     // Close DB connection
     await disconnectDB();

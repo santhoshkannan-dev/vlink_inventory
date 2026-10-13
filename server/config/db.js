@@ -4,7 +4,22 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 let mongod = null;
 
 import dns from 'dns';
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4']);
+} catch (dnsErr) {
+  // Ignore in environments where custom DNS servers cannot be bound
+}
+
+// Setup connection lifecycle resilience listeners
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB connection lost. Driver will automatically attempt reconnection.');
+});
+mongoose.connection.on('reconnected', () => {
+  console.log('🍃 MongoDB reconnected successfully.');
+});
+mongoose.connection.on('error', (err) => {
+  console.error('⚠️ MongoDB connection error:', err.message);
+});
 
 const connectDB = async () => {
   try {

@@ -99,7 +99,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const res = await axios.post(`${API_URL}/auth/login`, { email, password });
+      const res = await axios.post(`${API_URL}/auth/login`, { email, password }, { timeout: 45000 });
       
       const userData = {
         _id: res.data.user.id || res.data.user._id,
@@ -115,9 +115,17 @@ export const AuthProvider = ({ children }) => {
       setUser(userData);
       return { success: true };
     } catch (err) {
+      let message = 'Login failed. Please check credentials.';
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        message = 'Server is taking longer to respond. It may be waking up from sleep. Please try again.';
+      } else if (!err.response) {
+        message = 'Network error or unable to connect to the server. Please check your connection and retry.';
+      } else if (err.response.data?.message) {
+        message = err.response.data.message;
+      }
       return {
         success: false,
-        message: err.response?.data?.message || 'Login failed. Please check credentials.'
+        message
       };
     }
   };

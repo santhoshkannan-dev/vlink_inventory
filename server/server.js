@@ -34,8 +34,8 @@ const isOriginAllowed = (origin) => {
   // Exact match with configured origins
   if (allowedOrigins.includes(normalized)) return true;
 
-  // Allow Vercel preview deployments (https://vlink-inventory-*.vercel.app)
-  if (/^https:\/\/vlink-inventory[a-z0-9-]*\.vercel\.app$/.test(normalized)) return true;
+  // Allow all Vercel deployments associated with vlink-inventory (production, preview, and branch URLs)
+  if (/^https:\/\/.*vlink-inventory.*\.vercel\.app$/.test(normalized)) return true;
 
   // Allow local development origins
   if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) {
@@ -106,7 +106,13 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/technicians', technicianRoutes);
 
-// Health Check
+// Root & Health Check Ping Endpoints
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'UP', service: 'VLink Networks Inventory Management API', version: '1.0.0' });
+});
+app.head('/', (req, res) => {
+  res.status(200).end();
+});
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'UP', message: 'VLink Systems Engine is healthy.' });
 });

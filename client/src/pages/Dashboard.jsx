@@ -81,8 +81,8 @@ export default function Dashboard() {
             <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Total Stock Available</p>
               <p className="text-2xl font-black font-mono text-slate-900 mt-1">{stats.totalStock.toLocaleString()}</p>
-              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-2">
-                <TrendingUp className="w-3 h-3" /> +2% vs yesterday
+              <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 mt-2">
+                <Boxes className="w-3 h-3 text-blue-500" /> Live warehouse count
               </span>
             </div>
             <div className="p-2.5 rounded-lg bg-blue-50 text-blue-600"><Boxes className="w-5 h-5" /></div>

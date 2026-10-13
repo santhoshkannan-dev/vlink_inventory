@@ -1,9 +1,9 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const StockOutSchema = new mongoose.Schema({
   itemId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'InventoryMaster',
+    ref: 'Inventory',
     required: true
   },
   quantity: {
@@ -34,4 +34,4 @@ const StockOutSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-module.exports = mongoose.model('StockOut', StockOutSchema);
+export default mongoose.model('StockOut', StockOutSchema);

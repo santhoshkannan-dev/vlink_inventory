@@ -1,24 +1,17 @@
 import DailyEntry from '../models/DailyEntry.js';
 import Inventory from '../models/Inventory.js';
 import Transaction from '../models/Transaction.js';
+import { getLocalDateString, getLocalTimeString } from '../utils/dateUtils.js';
 
 export const createDailyEntry = async (req, res) => {
   try {
     const { date, time, careOf, quality, remarks, materials } = req.body;
 
-    // 1. Save the Daily Entry Log
-    const newEntry = new DailyEntry({
-      date,
-      time,
-      careOf,
-      quality,
-      remarks,
-      materials
-    });
-    
-    await newEntry.save();
+    if (!materials || typeof materials !== 'object') {
+      return res.status(400).json({ success: false, message: 'Materials object is required.' });
+    }
 
-    // 2. Map frontend object keys to actual DB inventory names
+    // 1. Map frontend object keys to actual DB inventory names
     const materialMapping = {
       homeNode: 'Home Node',
       patchCode: 'Patch Code',
@@ -30,34 +23,91 @@ export const createDailyEntry = async (req, res) => {
       cable: 'Cable'
     };
 
-    // 3. Process stock updates and write audit logs for each material provided
+    const entryDate = date || getLocalDateString();
+    const entryTime = time || getLocalTimeString();
+
+    // 2. Validate stock availability for all materials BEFORE committing any deductions
+    const validatedDeductions = [];
+
     for (const [key, qty] of Object.entries(materials)) {
-      if (qty > 0) {
+      const numericQty = Number(qty);
+      if (numericQty < 0) {
+        return res.status(400).json({ success: false, message: `Invalid negative quantity for ${key}.` });
+      }
+
+      if (numericQty > 0) {
         const dbItemName = materialMapping[key];
-        
         if (!dbItemName) continue;
 
-        // Atomically decrement stock in Inventory
-        const updatedItem = await Inventory.findOneAndUpdate(
-          { itemName: dbItemName },
-          { $inc: { currentStock: -qty } },
-          { new: true }
-        );
-
-        if (updatedItem) {
-          // Generate a permanent transaction record for the audit log
-          await Transaction.create({
-            item: updatedItem._id,
-            quantity: qty,
-            type: 'OUT',
-            user: careOf, // Crediting the technician dispatching it
-            date,
-            time,
-            remarks: `Automated deduction via Daily Entry log. Quality status: ${quality}`
+        const item = await Inventory.findOne({ itemName: dbItemName });
+        if (!item) {
+          return res.status(404).json({
+            success: false,
+            message: `Material "${dbItemName}" was not found in the inventory system.`
           });
         }
+
+        if (item.currentStock < numericQty) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient stock for ${dbItemName}. Available: ${item.currentStock} ${item.unit}, Requested: ${numericQty} ${item.unit}.`
+          });
+        }
+
+        validatedDeductions.push({
+          itemId: item._id,
+          itemName: dbItemName,
+          quantity: numericQty,
+          unit: item.unit
+        });
       }
     }
+
+    if (validatedDeductions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No material quantities greater than 0 were specified.'
+      });
+    }
+
+    // 3. Atomically decrement stock and create transactions
+    for (const deduction of validatedDeductions) {
+      const updatedItem = await Inventory.findOneAndUpdate(
+        { _id: deduction.itemId, currentStock: { $gte: deduction.quantity } },
+        { $inc: { currentStock: -deduction.quantity } },
+        { new: true }
+      );
+
+      if (!updatedItem) {
+        return res.status(400).json({
+          success: false,
+          message: `Stock level conflict for ${deduction.itemName}. Please refresh and retry.`
+        });
+      }
+
+      // Generate audit transaction log
+      await Transaction.create({
+        item: updatedItem._id,
+        quantity: deduction.quantity,
+        type: 'OUT',
+        user: careOf || req.user?.name || 'Technician',
+        date: entryDate,
+        time: entryTime,
+        remarks: `Daily Entry dispatch. Quality status: ${quality || 'GOOD'} | ${remarks || ''}`
+      });
+    }
+
+    // 4. Save the Daily Entry Log
+    const newEntry = new DailyEntry({
+      date: entryDate,
+      time: entryTime,
+      careOf,
+      quality: quality || 'GOOD',
+      remarks,
+      materials
+    });
+
+    await newEntry.save();
 
     res.status(201).json({ 
       success: true, 

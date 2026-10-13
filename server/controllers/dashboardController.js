@@ -1,6 +1,7 @@
 import Inventory from '../models/Inventory.js';
 import Transaction from '../models/Transaction.js';
 import DailyEntry from '../models/DailyEntry.js';
+import { getLocalDateString } from '../utils/dateUtils.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
@@ -11,8 +12,8 @@ export const getDashboardStats = async (req, res) => {
     // 2. Count distinct items currently hitting danger levels
     const lowStockCount = items.filter(item => item.currentStock <= item.minimumStock).length;
 
-    // 3. Gather today's transactional operational flows
-    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD standard matching
+    // 3. Gather today's transactional operational flows using local date
+    const todayStr = getLocalDateString();
     
     const todayEntriesCount = await DailyEntry.countDocuments({ date: todayStr });
 

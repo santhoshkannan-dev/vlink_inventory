@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { FileText, FileSpreadsheet, Printer, Calendar, User, Layers, ShieldCheck, TrendingUp, Download, Loader2 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import axios from 'axios';
+import { getLocalDateString } from '../utils/dateUtils';
 
 export default function Reports() {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState('');
+  const [technicians, setTechnicians] = useState([]);
 
   // Filter states
   const [dateRange, setDateRange] = useState('Last 30 Days');
@@ -16,16 +18,16 @@ export default function Reports() {
   const getDateParams = () => {
     let startDate = '';
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = getLocalDateString(now);
 
     if (dateRange === 'Last 24 Hours') {
-      startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      startDate = getLocalDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000));
     } else if (dateRange === 'Last 7 Days') {
-      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      startDate = getLocalDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
     } else if (dateRange === 'Last 30 Days') {
-      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      startDate = getLocalDateString(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
     } else if (dateRange === 'Last 6 Months') {
-      startDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      startDate = getLocalDateString(new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000));
     }
 
     return { startDate, endDate: todayStr };
@@ -55,6 +57,12 @@ export default function Reports() {
 
   useEffect(() => {
     fetchReport();
+    axios.get('/api/technicians')
+      .then(res => {
+        const list = res.data.data || [];
+        setTechnicians(list.filter(t => t.active !== false));
+      })
+      .catch(() => {});
   }, []);
 
   const handleApplyFilters = () => {
@@ -157,6 +165,9 @@ export default function Reports() {
             className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
           >
             <option>All Employees</option>
+            {technicians.map(t => (
+              <option key={t._id} value={t.name}>{t.name}</option>
+            ))}
           </select>
         </div>
         <div className="space-y-1">
@@ -187,25 +198,25 @@ export default function Reports() {
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Movements</p>
           <p className="text-2xl font-black font-mono text-slate-900 mt-1">{summary?.totalMovements || 0}</p>
-          <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 mt-2">
-            <TrendingUp className="w-3 h-3" /> +12.5% vs Prev Period
+          <span className="text-[10px] text-slate-500 font-semibold block mt-2">
+            Audit Ledger Transactions
           </span>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Inventory Value Out</p>
-          <p className="text-2xl font-black font-mono text-slate-900 mt-1">₹{Number(summary?.inventoryValueOut || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-          <span className="text-[10px] text-slate-400 font-medium block mt-2">Stable Trend Valuation</span>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Units Dispatched</p>
+          <p className="text-2xl font-black font-mono text-slate-900 mt-1">{(summary?.totalUnitsDispatched ?? summary?.inventoryValueOut ?? 0).toLocaleString()}</p>
+          <span className="text-[10px] text-slate-400 font-medium block mt-2">Total Outward Stock Units</span>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Critical Stock Alerts</p>
           <p className="text-2xl font-black font-mono text-rose-600 mt-1">{String(summary?.criticalAlerts || 0).padStart(2, '0')}</p>
-          <span className="text-[10px] text-rose-500 font-semibold block mt-2">⚠️ Action Required Immediately</span>
+          <span className="text-[10px] text-rose-500 font-semibold block mt-2">⚠️ Threshold Action Needed</span>
         </div>
         <div className="bg-[#2563eb] border border-blue-600 rounded-xl p-5 text-white shadow-md relative overflow-hidden">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-blue-200">Report Confidence</p>
-          <p className="text-2xl font-black font-mono mt-1">{summary?.confidenceRate || '100%'}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-blue-200">Catalog Rows</p>
+          <p className="text-2xl font-black font-mono mt-1">{summary?.rows?.length || 0}</p>
           <span className="text-[10px] text-blue-100 font-semibold flex items-center gap-1 mt-2">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-300" /> Audit Ready Database
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-300" /> Live Audit Verified
           </span>
         </div>
       </div>

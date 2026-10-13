@@ -1,10 +1,10 @@
-const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const User = require('../models/User');
-const InventoryMaster = require('../models/InventoryMaster');
-const DailyEntry = require('../models/DailyEntry');
-const Transaction = require('../models/Transaction');
-const { connectDB, disconnectDB } = require('../config/db');
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import User from '../models/User.js';
+import Inventory from '../models/Inventory.js';
+import DailyEntry from '../models/DailyEntry.js';
+import Transaction from '../models/Transaction.js';
+import { connectDB, disconnectDB } from '../config/db.js';
 
 dotenv.config();
 
@@ -18,7 +18,7 @@ const runValidationTests = async () => {
     // Clear and Seed
     console.log('Seeding verification entries...');
     await User.deleteMany();
-    await InventoryMaster.deleteMany();
+    await Inventory.deleteMany();
     await DailyEntry.deleteMany();
     await Transaction.deleteMany();
 
@@ -29,9 +29,8 @@ const runValidationTests = async () => {
       role: 'Admin'
     });
 
-    const nodeItem = await InventoryMaster.create({
+    const nodeItem = await Inventory.create({
       itemName: 'Home Node (FTTH)',
-      sku: 'SKU-FTTH-VAL',
       category: 'Terminal Equipment',
       unit: 'Units',
       currentStock: 10,
@@ -39,9 +38,8 @@ const runValidationTests = async () => {
       description: 'Validation testing nodes'
     });
 
-    const cableItem = await InventoryMaster.create({
+    const cableItem = await Inventory.create({
       itemName: 'Fiber Cable',
-      sku: 'SKU-CAB-VAL',
       category: 'Infrastructure',
       unit: 'Meters',
       currentStock: 100,
@@ -58,7 +56,7 @@ const runValidationTests = async () => {
       try {
         const processedMaterials = [];
         for (const mat of dispatchData.materials) {
-          const item = await InventoryMaster.findById(mat.itemId).session(session);
+          const item = await Inventory.findById(mat.itemId).session(session);
           if (!item) throw new Error('Item not found');
 
           if (item.currentStock < mat.quantity) {
@@ -69,10 +67,10 @@ const runValidationTests = async () => {
           await item.save({ session });
 
           const transaction = new Transaction({
-            itemId: item._id,
+            item: item._id,
             quantity: mat.quantity,
             type: 'OUT',
-            user: admin._id,
+            user: admin.name,
             date: dispatchData.date,
             time: dispatchData.time,
             remarks: 'Verification test transaction'
@@ -86,7 +84,7 @@ const runValidationTests = async () => {
           time: dispatchData.time,
           careOf: dispatchData.careOf,
           quality: 'GOOD',
-          materials: processedMaterials
+          materials: { homeNode: 5, cable: dispatchData.materials[1]?.quantity || 0 }
         });
         await dailyEntry.save({ session });
 
@@ -101,7 +99,6 @@ const runValidationTests = async () => {
     };
 
     // 2. TEST CASE A: FAILED TRANSACTION (One item has insufficient stock)
-    // Dispatch request: 5 nodes (valid) AND 150 meters of cable (invalid, only 100 available)
     console.log('\nRunning Test Case A: Dispatch request containing an item with insufficient stock...');
     const resultA = await simulateDailyDispatch({
       date: '2026-06-18',
@@ -116,8 +113,8 @@ const runValidationTests = async () => {
     console.log(`- Dispatch Result: ${resultA.success ? 'SUCCESS' : 'FAILED (' + resultA.error + ')'}`);
 
     // Check stocks (should remain unchanged due to transaction abort)
-    const checkNodeStockA = await InventoryMaster.findById(nodeItem._id);
-    const checkCableStockA = await InventoryMaster.findById(cableItem._id);
+    const checkNodeStockA = await Inventory.findById(nodeItem._id);
+    const checkCableStockA = await Inventory.findById(cableItem._id);
     console.log(`- Post-Dispatch stock levels:`);
     console.log(`  * ${checkNodeStockA.itemName}: ${checkNodeStockA.currentStock} (Expected: 10)`);
     console.log(`  * ${checkCableStockA.itemName}: ${checkCableStockA.currentStock} (Expected: 100)`);
@@ -126,7 +123,6 @@ const runValidationTests = async () => {
     console.log(`=> Test Case A (Atomic Rollback Safety): ${passedTestA ? 'PASSED ✅' : 'FAILED ❌'}`);
 
     // 3. TEST CASE B: SUCCESSFUL TRANSACTION (All items have sufficient stock)
-    // Dispatch request: 5 nodes (valid) AND 30 meters of cable (valid)
     console.log('\nRunning Test Case B: Dispatch request containing all valid stock quantities...');
     const resultB = await simulateDailyDispatch({
       date: '2026-06-18',
@@ -141,8 +137,8 @@ const runValidationTests = async () => {
     console.log(`- Dispatch Result: ${resultB.success ? 'SUCCESS' : 'FAILED (' + resultB.error + ')'}`);
 
     // Check stocks (should be deducted)
-    const checkNodeStockB = await InventoryMaster.findById(nodeItem._id);
-    const checkCableStockB = await InventoryMaster.findById(cableItem._id);
+    const checkNodeStockB = await Inventory.findById(nodeItem._id);
+    const checkCableStockB = await Inventory.findById(cableItem._id);
     console.log(`- Post-Dispatch stock levels:`);
     console.log(`  * ${checkNodeStockB.itemName}: ${checkNodeStockB.currentStock} (Expected: 5)`);
     console.log(`  * ${checkCableStockB.itemName}: ${checkCableStockB.currentStock} (Expected: 70)`);

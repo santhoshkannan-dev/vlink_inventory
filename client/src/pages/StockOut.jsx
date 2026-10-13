@@ -2,23 +2,25 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { ArrowUpRight, FileSpreadsheet } from 'lucide-react';
 import axios from 'axios';
+import { getLocalDateString, getLocalTimeString } from '../utils/dateUtils';
 
 export default function StockOut() {
   const { user } = useContext(AuthContext);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Form states
+  // Form states initialized immediately with local date/time
   const [itemId, setItemId] = useState('');
   const [quantity, setQuantity] = useState('');
   const [employee, setEmployee] = useState('');
   const [careOf, setCareOf] = useState('');
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
+  const [date, setDate] = useState(getLocalDateString);
+  const [time, setTime] = useState(getLocalTimeString);
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -35,14 +37,14 @@ export default function StockOut() {
     };
     fetchItems();
 
-    // Default date/time
-    const now = new Date();
-    setDate(now.toISOString().split('T')[0]);
-    setTime(now.toTimeString().split(' ')[0].substring(0, 5));
+    // Default local date/time
+    setDate(getLocalDateString());
+    setTime(getLocalTimeString());
   }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setError('');
     setSuccess('');
 
@@ -51,17 +53,24 @@ export default function StockOut() {
       return;
     }
 
+    const numQty = Number(quantity);
+    if (!numQty || numQty <= 0) {
+      setError('Please enter a valid quantity greater than 0.');
+      return;
+    }
+
     // Find the item to check stock levels
     const selectedItem = items.find(i => i._id === itemId);
-    if (selectedItem && selectedItem.currentStock < Number(quantity)) {
+    if (selectedItem && selectedItem.currentStock < numQty) {
       setError(`Insufficient stock. Only ${selectedItem.currentStock} ${selectedItem.unit} available.`);
       return;
     }
 
     try {
+      setSubmitting(true);
       const response = await axios.post('/api/inventory/stock-out', {
         itemId,
-        quantity: Number(quantity),
+        quantity: numQty,
         employee: employee || user?.name || 'Staff',
         careOf,
         purpose,
@@ -71,14 +80,16 @@ export default function StockOut() {
       });
 
       if (response.data.success) {
-        setSuccess(`Successfully logged stock issuance! ${quantity} units deducted.`);
-        // Reset form except defaults
+        setSuccess(`Successfully logged stock issuance! ${numQty} units deducted.`);
+        // Reset form
         setItemId('');
         setQuantity('');
         setEmployee('');
         setCareOf('');
         setPurpose('');
         setRemarks('');
+        setDate(getLocalDateString());
+        setTime(getLocalTimeString());
         // Refresh catalog quantities
         const refreshRes = await axios.get('/api/inventory');
         if (refreshRes.data.success) {
@@ -87,6 +98,8 @@ export default function StockOut() {
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to process stock deduction.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -225,10 +238,15 @@ export default function StockOut() {
         <div className="flex justify-end pt-3">
           <button
             type="submit"
-            className="px-6 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-rose-100 flex items-center gap-1.5 cursor-pointer"
+            disabled={submitting}
+            className={`px-6 py-2.5 rounded-lg text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer ${
+              submitting
+                ? 'bg-rose-400 cursor-not-allowed text-white shadow-none'
+                : 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100'
+            }`}
           >
             <FileSpreadsheet className="w-4 h-4" />
-            Commit Stock Out
+            {submitting ? 'Deducting Stock...' : 'Commit Stock Out'}
           </button>
         </div>
       </form>

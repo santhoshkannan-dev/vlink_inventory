@@ -2,16 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { ClipboardList, Check, X, Send } from 'lucide-react';
 import { toast } from 'react-toastify';
 import axios from 'axios';
+import { getLocalDateString, getLocalTimeString } from '../utils/dateUtils';
 
 const DailyEntry = () => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Form states
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
+  // Form states initialized immediately with local date/time
+  const [date, setDate] = useState(getLocalDateString);
+  const [time, setTime] = useState(getLocalTimeString);
   const [careOf, setCareOf] = useState('Select Technician');
   const [quality, setQuality] = useState('GOOD');
   const [remarks, setRemarks] = useState('');
@@ -56,10 +58,9 @@ const DailyEntry = () => {
     };
     fetchTechnicians();
 
-    // Set current date & time as default
-    const now = new Date();
-    setDate(now.toISOString().split('T')[0]);
-    setTime(now.toTimeString().split(' ')[0].substring(0, 5));
+    // Set current local date & time as default
+    setDate(getLocalDateString());
+    setTime(getLocalTimeString());
   }, []);
 
   const handleQtyChange = (itemId, val) => {
@@ -78,12 +79,15 @@ const DailyEntry = () => {
     setCareOf('Select Technician');
     setRemarks('');
     setQuality('GOOD');
+    setDate(getLocalDateString());
+    setTime(getLocalTimeString());
     setError('');
     setSuccess('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setError('');
     setSuccess('');
 
@@ -135,6 +139,7 @@ const DailyEntry = () => {
     }
 
     try {
+      setSubmitting(true);
       const response = await axios.post('/api/daily-entries', {
         date,
         time,
@@ -152,6 +157,8 @@ const DailyEntry = () => {
       const msg = err.response?.data?.message || 'Transaction aborted. Check stock availability.';
       setError(msg);
       toast.error(msg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -321,34 +328,46 @@ const DailyEntry = () => {
 
               <button
                 type="submit"
-                className="py-2.5 px-6 bg-[#1D4ED8] hover:bg-blue-700 text-white font-bold text-xs rounded-lg flex items-center gap-2 transition-colors cursor-pointer shadow-md shadow-blue-100"
+                disabled={submitting}
+                className={`py-2.5 px-6 font-bold text-xs rounded-lg flex items-center gap-2 transition-colors cursor-pointer shadow-md shadow-blue-100 ${
+                  submitting ? 'bg-blue-400 cursor-not-allowed text-white' : 'bg-[#1D4ED8] hover:bg-blue-700 text-white'
+                }`}
               >
                 <Send className="h-3.5 w-3.5" />
-                Submit Entry
+                {submitting ? 'Submitting...' : 'Submit Entry'}
               </button>
             </div>
           </div>
 
           {/* Inventory Health Panel */}
-          <div className="bg-[#111827] text-white p-6 rounded-xl border border-gray-800 shadow-sm relative overflow-hidden flex items-center justify-between">
-            <div className="flex items-center gap-12">
-              <div>
-                <span className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest">Inventory Health</span>
-                <span className="block text-2xl font-extrabold mt-1 text-white">94.2%</span>
-                <span className="block text-[10px] text-gray-400 mt-1 uppercase tracking-wider">Accuracy Rate</span>
+          {(() => {
+            const totalItemsCount = items.length;
+            const healthyCount = items.filter(i => (i.currentStock || 0) > (i.minimumStock || 0)).length;
+            const healthRate = totalItemsCount > 0 ? Math.round((healthyCount / totalItemsCount) * 100) : 100;
+            const totalStockUnits = items.reduce((sum, i) => sum + (i.currentStock || 0), 0);
+
+            return (
+              <div className="bg-[#111827] text-white p-6 rounded-xl border border-gray-800 shadow-sm relative overflow-hidden flex items-center justify-between">
+                <div className="flex items-center gap-12">
+                  <div>
+                    <span className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest">Inventory Health</span>
+                    <span className="block text-2xl font-extrabold mt-1 text-white">{healthRate}%</span>
+                    <span className="block text-[10px] text-gray-400 mt-1 uppercase tracking-wider">Catalog Health Rate</span>
+                  </div>
+                  <div className="h-10 w-px bg-gray-800"></div>
+                  <div>
+                    <span className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest">&nbsp;</span>
+                    <span className="block text-2xl font-extrabold mt-1 text-white">{totalStockUnits.toLocaleString()}</span>
+                    <span className="block text-[10px] text-gray-400 mt-1 uppercase tracking-wider">Total Units in Stock</span>
+                  </div>
+                </div>
+                {/* Clipboard background icon */}
+                <div className="absolute right-6 opacity-5 select-none pointer-events-none">
+                  <ClipboardList className="h-24 w-24 text-white" />
+                </div>
               </div>
-              <div className="h-10 w-px bg-gray-800"></div>
-              <div>
-                <span className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest">&nbsp;</span>
-                <span className="block text-2xl font-extrabold mt-1 text-white">1,024</span>
-                <span className="block text-[10px] text-gray-400 mt-1 uppercase tracking-wider">Today's Units</span>
-              </div>
-            </div>
-            {/* Clipboard background icon */}
-            <div className="absolute right-6 opacity-5 select-none pointer-events-none">
-              <ClipboardList className="h-24 w-24 text-white" />
-            </div>
-          </div>
+            );
+          })()}
         </div>
       </form>
     </div>

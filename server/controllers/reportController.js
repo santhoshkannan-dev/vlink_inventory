@@ -22,7 +22,9 @@ const getAggregatedData = async (filters) => {
   }
 
   // Fetch transactions and populate item
-  const transactions = await Transaction.find(transactionQuery).populate('item');
+  const transactions = await Transaction.find(transactionQuery)
+    .populate('item')
+    .sort({ createdAt: -1 });
 
   // Build query for Inventory catalog
   let itemQuery = {};
@@ -79,22 +81,21 @@ const getAggregatedData = async (filters) => {
     return row;
   });
 
-  // Calculate KPIs
+  // Calculate real KPIs
   const totalMovements = transactions.length;
   const totalUnitsDispatched = transactions
     .filter(t => t.type === 'OUT')
     .reduce((acc, curr) => acc + curr.quantity, 0);
-  const inventoryValueOut = totalUnitsDispatched * 27.50; // Mock unit value
 
   const criticalStockAlerts = items.filter(item => item.currentStock <= item.minimumStock).length;
 
   return {
     rows: reportRows,
+    transactions,
     kpis: {
       totalMovements,
-      inventoryValueOut: `$${inventoryValueOut.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      criticalStockAlerts: String(criticalStockAlerts).padStart(2, '0'),
-      reportConfidence: '99.8%'
+      totalUnitsDispatched,
+      criticalStockAlerts: String(criticalStockAlerts).padStart(2, '0')
     }
   };
 };
@@ -108,19 +109,14 @@ export const getReportSummary = async (req, res) => {
       category: req.query.category
     };
     const reportData = await getAggregatedData(filters);
-    
-    // Clean currency symbol if present
-    const cleanedValOut = typeof reportData.kpis.inventoryValueOut === 'string' 
-      ? reportData.kpis.inventoryValueOut.replace('$', '') 
-      : reportData.kpis.inventoryValueOut;
 
     res.status(200).json({
       success: true,
       data: {
         totalMovements: reportData.kpis.totalMovements,
-        inventoryValueOut: cleanedValOut,
+        totalUnitsDispatched: reportData.kpis.totalUnitsDispatched,
+        inventoryValueOut: reportData.kpis.totalUnitsDispatched, // Compatible fallback
         criticalAlerts: reportData.kpis.criticalStockAlerts,
-        confidenceRate: reportData.kpis.reportConfidence,
         rows: reportData.rows
       }
     });
@@ -128,7 +124,6 @@ export const getReportSummary = async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
-
 
 export const exportExcel = async (req, res) => {
   try {
@@ -144,20 +139,24 @@ export const exportExcel = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'VLink Networks';
     workbook.created = new Date();
-    const worksheet = workbook.addWorksheet('Material Usage Report');
 
-    // --- Title Section ---
+    // ==========================================
+    // WORKSHEET 1: Summary by Material
+    // ==========================================
+    const worksheet = workbook.addWorksheet('Material Usage Summary');
+
+    // Title Section
     const titleRow = worksheet.addRow(['VLink Networks — Inventory Management System']);
     titleRow.getCell(1).font = { bold: true, size: 16, color: { argb: 'FF1E293B' } };
     worksheet.mergeCells('A1:H1');
 
-    const subtitleRow = worksheet.addRow(['Actionable Material Usage Report']);
+    const subtitleRow = worksheet.addRow(['Aggregated Material Usage Summary']);
     subtitleRow.getCell(1).font = { bold: true, size: 12, color: { argb: 'FF64748B' } };
     worksheet.mergeCells('A2:H2');
 
     worksheet.addRow([]);
 
-    // --- Filter Info ---
+    // Filter Info
     const filterStyle = { font: { size: 10, color: { argb: 'FF475569' } } };
     const r1 = worksheet.addRow([`Date Range: ${filters.startDate || 'All Time'} — ${filters.endDate || 'All Time'}`]);
     r1.getCell(1).font = filterStyle.font;
@@ -165,10 +164,10 @@ export const exportExcel = async (req, res) => {
     r2.getCell(1).font = filterStyle.font;
     worksheet.addRow([]);
 
-    // --- KPI Row ---
+    // KPI Row
     const kpiRow = worksheet.addRow([
       'Total Movements', reportData.kpis.totalMovements, '',
-      'Value Out', reportData.kpis.inventoryValueOut, '',
+      'Units Dispatched', reportData.kpis.totalUnitsDispatched, '',
       'Critical Alerts', reportData.kpis.criticalStockAlerts
     ]);
     kpiRow.eachCell((cell, colNum) => {
@@ -180,7 +179,7 @@ export const exportExcel = async (req, res) => {
     });
     worksheet.addRow([]);
 
-    // --- Header Row ---
+    // Header Row
     const headers = ['Item Code (SKU)', 'Product Description', 'Category', 'Qty In', 'Qty Out', 'Net Change', 'Last Employee', 'Status'];
     const headerRow = worksheet.addRow(headers);
     const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
@@ -198,7 +197,7 @@ export const exportExcel = async (req, res) => {
     });
     headerRow.height = 28;
 
-    // --- Data Rows ---
+    // Data Rows
     reportData.rows.forEach((row, idx) => {
       const dataRow = worksheet.addRow([
         row.sku, row.itemName, row.category, row.qtyIn, row.qtyOut, row.netChange, row.lastEmployee, row.status
@@ -212,7 +211,6 @@ export const exportExcel = async (req, res) => {
           bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }
         };
       });
-      // Style status cell
       const statusCell = dataRow.getCell(8);
       if (row.status === 'OPTIMAL') {
         statusCell.font = { bold: true, size: 10, color: { argb: 'FF059669' } };
@@ -223,17 +221,55 @@ export const exportExcel = async (req, res) => {
       }
     });
 
-    // --- Column Widths ---
     worksheet.columns = [
       { width: 20 }, { width: 28 }, { width: 20 }, { width: 16 },
       { width: 16 }, { width: 16 }, { width: 22 }, { width: 16 }
     ];
 
-    // --- Footer ---
-    worksheet.addRow([]);
-    const footerRow = worksheet.addRow([`Report generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} by VLink Networks`]);
-    footerRow.getCell(1).font = { italic: true, size: 9, color: { argb: 'FF94A3B8' } };
+    // ==========================================
+    // WORKSHEET 2: Stock Movement History (Transaction Details)
+    // ==========================================
+    const historySheet = workbook.addWorksheet('Stock Movement History');
+    const hTitle = historySheet.addRow(['VLink Networks — Stock Movement Audit History']);
+    hTitle.getCell(1).font = { bold: true, size: 14, color: { argb: 'FF1E293B' } };
+    historySheet.mergeCells('A1:G1');
+    historySheet.addRow([]);
 
+    const hHeaders = ['Date', 'Time', 'Type', 'Item Name', 'Quantity', 'Handled By', 'Remarks / Audit Note'];
+    const hHeaderRow = historySheet.addRow(hHeaders);
+    hHeaderRow.eachCell((cell) => {
+      cell.fill = headerFill;
+      cell.font = headerFont;
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    hHeaderRow.height = 26;
+
+    reportData.transactions.forEach((tx, idx) => {
+      const row = historySheet.addRow([
+        tx.date,
+        tx.time,
+        tx.type,
+        tx.item?.itemName || 'Unknown Item',
+        `${tx.quantity} ${tx.item?.unit || 'Nos'}`,
+        tx.user || 'System',
+        tx.remarks || '-'
+      ]);
+      const bgColor = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+      row.eachCell((cell, col) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+        cell.font = { size: 9, color: { argb: 'FF334155' } };
+        if (col === 3) {
+          cell.font = { bold: true, size: 9, color: { argb: tx.type === 'IN' ? 'FF059669' : 'FFDC2626' } };
+        }
+      });
+    });
+
+    historySheet.columns = [
+      { width: 14 }, { width: 12 }, { width: 10 }, { width: 26 },
+      { width: 16 }, { width: 22 }, { width: 40 }
+    ];
+
+    // Response headers
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename=vlink_material_usage_report.xlsx');
 
@@ -262,7 +298,7 @@ export const exportPDF = async (req, res) => {
 
     doc.pipe(res);
 
-    // --- Header ---
+    // Header Banner
     doc.rect(0, 0, 595, 80).fill('#1E293B');
     doc.fillColor('#FFFFFF').fontSize(20).font('Helvetica-Bold').text('VLink Networks', 40, 22);
     doc.fillColor('#94A3B8').fontSize(10).font('Helvetica').text('Inventory Management System — Material Usage Report', 40, 48);
@@ -270,60 +306,59 @@ export const exportPDF = async (req, res) => {
     doc.moveDown(3);
     const afterHeader = 100;
 
-    // --- Filter Info ---
+    // Filter Info
     doc.fillColor('#475569').fontSize(9).font('Helvetica');
     doc.text(`Date Range: ${filters.startDate || 'All Time'} to ${filters.endDate || 'All Time'}`, 40, afterHeader);
     doc.text(`Technician: ${filters.employee || 'All'}   |   Category: ${filters.category || 'All'}`, 40, afterHeader + 14);
 
-    // --- KPI Cards ---
-    const kpiY = afterHeader + 40;
+    // KPI Cards
+    const kpiY = afterHeader + 36;
     const kpiBoxWidth = 165;
     const kpiGap = 10;
 
     // Card 1: Total Movements
-    doc.rect(40, kpiY, kpiBoxWidth, 50).fill('#F1F5F9');
-    doc.fillColor('#64748B').fontSize(8).font('Helvetica-Bold').text('TOTAL MOVEMENTS', 50, kpiY + 10);
-    doc.fillColor('#1E293B').fontSize(18).font('Helvetica-Bold').text(String(reportData.kpis.totalMovements), 50, kpiY + 26);
+    doc.rect(40, kpiY, kpiBoxWidth, 48).fill('#F1F5F9');
+    doc.fillColor('#64748B').fontSize(8).font('Helvetica-Bold').text('TOTAL MOVEMENTS', 50, kpiY + 8);
+    doc.fillColor('#1E293B').fontSize(16).font('Helvetica-Bold').text(String(reportData.kpis.totalMovements), 50, kpiY + 24);
 
-    // Card 2: Value Out
-    doc.rect(40 + kpiBoxWidth + kpiGap, kpiY, kpiBoxWidth, 50).fill('#F1F5F9');
-    doc.fillColor('#64748B').fontSize(8).font('Helvetica-Bold').text('INVENTORY VALUE OUT', 50 + kpiBoxWidth + kpiGap, kpiY + 10);
-    doc.fillColor('#1E293B').fontSize(18).font('Helvetica-Bold').text(reportData.kpis.inventoryValueOut, 50 + kpiBoxWidth + kpiGap, kpiY + 26);
+    // Card 2: Units Dispatched
+    doc.rect(40 + kpiBoxWidth + kpiGap, kpiY, kpiBoxWidth, 48).fill('#F1F5F9');
+    doc.fillColor('#64748B').fontSize(8).font('Helvetica-Bold').text('UNITS DISPATCHED', 50 + kpiBoxWidth + kpiGap, kpiY + 8);
+    doc.fillColor('#1E293B').fontSize(16).font('Helvetica-Bold').text(String(reportData.kpis.totalUnitsDispatched), 50 + kpiBoxWidth + kpiGap, kpiY + 24);
 
     // Card 3: Critical Alerts
-    doc.rect(40 + (kpiBoxWidth + kpiGap) * 2, kpiY, kpiBoxWidth, 50).fill('#FEF2F2');
-    doc.fillColor('#DC2626').fontSize(8).font('Helvetica-Bold').text('CRITICAL ALERTS', 50 + (kpiBoxWidth + kpiGap) * 2, kpiY + 10);
-    doc.fillColor('#DC2626').fontSize(18).font('Helvetica-Bold').text(reportData.kpis.criticalStockAlerts, 50 + (kpiBoxWidth + kpiGap) * 2, kpiY + 26);
+    doc.rect(40 + (kpiBoxWidth + kpiGap) * 2, kpiY, kpiBoxWidth, 48).fill('#FEF2F2');
+    doc.fillColor('#DC2626').fontSize(8).font('Helvetica-Bold').text('CRITICAL ALERTS', 50 + (kpiBoxWidth + kpiGap) * 2, kpiY + 8);
+    doc.fillColor('#DC2626').fontSize(16).font('Helvetica-Bold').text(reportData.kpis.criticalStockAlerts, 50 + (kpiBoxWidth + kpiGap) * 2, kpiY + 24);
 
-    // --- Table ---
-    const tableTop = kpiY + 70;
+    // Table 1: Aggregated Summary
+    const tableTop = kpiY + 62;
     const colWidths = [70, 100, 55, 55, 65, 85, 60];
     const colX = [40];
     for (let i = 1; i < colWidths.length; i++) {
       colX.push(colX[i - 1] + colWidths[i - 1] + 4);
     }
 
-    const drawTableHeader = (y) => {
-      doc.rect(40, y, 520, 22).fill('#1E293B');
+    const drawTableHeader = (y, title = 'MATERIAL USAGE SUMMARY') => {
+      doc.fillColor('#0F172A').fontSize(9).font('Helvetica-Bold').text(title, 40, y - 14);
+      doc.rect(40, y, 520, 20).fill('#1E293B');
       doc.fillColor('#FFFFFF').fontSize(8).font('Helvetica-Bold');
       const headers = ['SKU', 'Description', 'Qty In', 'Qty Out', 'Net Change', 'Last Employee', 'Status'];
       headers.forEach((h, i) => {
-        doc.text(h, colX[i] + 4, y + 7, { width: colWidths[i], align: i >= 2 && i <= 4 ? 'right' : 'left' });
+        doc.text(h, colX[i] + 4, y + 6, { width: colWidths[i], align: i >= 2 && i <= 4 ? 'right' : 'left' });
       });
-      return y + 26;
+      return y + 24;
     };
 
     let y = drawTableHeader(tableTop);
 
     reportData.rows.forEach((row, idx) => {
-      if (y > 760) {
-        // Footer on current page
+      if (y > 740) {
         doc.fillColor('#94A3B8').fontSize(7).font('Helvetica').text('VLink Networks — Confidential', 40, 800, { align: 'center', width: 520 });
         doc.addPage();
         y = drawTableHeader(40);
       }
 
-      // Alternating row background
       if (idx % 2 === 0) {
         doc.rect(40, y - 2, 520, 18).fill('#F8FAFC');
       }
@@ -336,7 +371,6 @@ export const exportPDF = async (req, res) => {
       doc.fillColor('#DC2626').font('Helvetica-Bold');
       doc.text(row.qtyOut, colX[3] + 4, y + 2, { width: colWidths[3], align: 'right' });
 
-      // Net change color
       const netColor = row.netChange.startsWith('+') ? '#059669' : '#334155';
       doc.fillColor(netColor).font('Helvetica-Bold');
       doc.text(row.netChange, colX[4] + 4, y + 2, { width: colWidths[4], align: 'right' });
@@ -344,20 +378,65 @@ export const exportPDF = async (req, res) => {
       doc.fillColor('#475569').font('Helvetica');
       doc.text(row.lastEmployee, colX[5] + 4, y + 2, { width: colWidths[5] });
 
-      // Status badge color
       const statusColor = row.status === 'OPTIMAL' ? '#059669' : row.status === 'LOW STOCK' ? '#D97706' : '#DC2626';
       doc.fillColor(statusColor).font('Helvetica-Bold');
       doc.text(row.status, colX[6] + 4, y + 2, { width: colWidths[6] });
 
-      y += 20;
+      y += 18;
     });
 
-    // --- Footer ---
-    doc.moveDown(2);
-    const footerY = Math.max(y + 20, 760);
-    doc.rect(0, footerY, 595, 40).fill('#F8FAFC');
-    doc.fillColor('#94A3B8').fontSize(8).font('Helvetica');
-    doc.text(`Report generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}  |  VLink Networks — Inventory Management System`, 40, footerY + 14, { align: 'center', width: 520 });
+    // Add Section 2: Detailed Transaction Movements Log
+    if (reportData.transactions.length > 0) {
+      doc.addPage();
+      let txY = 40;
+      doc.fillColor('#0F172A').fontSize(12).font('Helvetica-Bold').text('DETAILED STOCK MOVEMENT AUDIT LOG', 40, txY);
+      txY += 20;
+
+      const txColWidths = [60, 50, 45, 120, 50, 80, 105];
+      const txColX = [40];
+      for (let i = 1; i < txColWidths.length; i++) {
+        txColX.push(txColX[i - 1] + txColWidths[i - 1] + 2);
+      }
+
+      const drawTxHeader = (currY) => {
+        doc.rect(40, currY, 520, 20).fill('#1E293B');
+        doc.fillColor('#FFFFFF').fontSize(8).font('Helvetica-Bold');
+        const headers = ['Date', 'Time', 'Type', 'Item Name', 'Qty', 'Handled By', 'Remarks'];
+        headers.forEach((h, i) => {
+          doc.text(h, txColX[i] + 3, currY + 6, { width: txColWidths[i] });
+        });
+        return currY + 22;
+      };
+
+      txY = drawTxHeader(txY);
+
+      // Render all matching transactions across pages
+      reportData.transactions.forEach((tx, idx) => {
+        if (txY > 750) {
+          doc.addPage();
+          txY = drawTxHeader(40);
+        }
+
+        if (idx % 2 === 0) {
+          doc.rect(40, txY - 2, 520, 16).fill('#F8FAFC');
+        }
+
+        doc.fillColor('#475569').fontSize(7.5).font('Helvetica');
+        doc.text(tx.date, txColX[0] + 3, txY + 2, { width: txColWidths[0] });
+        doc.text(tx.time, txColX[1] + 3, txY + 2, { width: txColWidths[1] });
+
+        doc.fillColor(tx.type === 'IN' ? '#059669' : '#DC2626').font('Helvetica-Bold');
+        doc.text(tx.type, txColX[2] + 3, txY + 2, { width: txColWidths[2] });
+
+        doc.fillColor('#1E293B').font('Helvetica');
+        doc.text((tx.item?.itemName || 'Item').substring(0, 24), txColX[3] + 3, txY + 2, { width: txColWidths[3] });
+        doc.text(String(tx.quantity), txColX[4] + 3, txY + 2, { width: txColWidths[4] });
+        doc.text((tx.user || 'System').substring(0, 16), txColX[5] + 3, txY + 2, { width: txColWidths[5] });
+        doc.text((tx.remarks || '').substring(0, 25), txColX[6] + 3, txY + 2, { width: txColWidths[6] });
+
+        txY += 16;
+      });
+    }
 
     doc.end();
   } catch (error) {

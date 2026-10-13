@@ -22,16 +22,17 @@ const app = express();
 
 const allowedOrigins = [
   'http://localhost:5173',
-  process.env.FRONTEND_URL || '*'
-];
+  'http://localhost:3000',
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, postman)
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (like mobile apps, curl, postman) or matching allowed origins
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*') || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
-      callback(new Error('Blocked by CORS policy'));
+      callback(new Error(`Blocked by CORS policy: Origin ${origin} not allowed`));
     }
   },
   credentials: true
@@ -43,11 +44,12 @@ const seedDefaultData = async () => {
   try {
     const userCount = await User.countDocuments();
     if (userCount === 0) {
+      const defaultAdminPass = process.env.ADMIN_DEFAULT_PASSWORD || 'adminpassword123';
       console.log('🌱 Database is empty. Seeding default administrator account...');
       await User.create({
         name: 'Systems Administrator',
         email: 'admin@vlink.com',
-        password: 'adminpassword123', // ◄ Default password for first login
+        password: defaultAdminPass,
         role: 'Admin'
       });
       console.log('✅ Administrator account seeding completed. Login email: admin@vlink.com');

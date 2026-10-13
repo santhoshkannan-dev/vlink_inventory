@@ -6,8 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "seed": "node utils/seeder.js"
+    "dev": "node --watch server.js",
+    "seed": "node utils/seeder.js",
+    "test": "node tests/verify.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

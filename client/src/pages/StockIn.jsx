@@ -2,22 +2,24 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { ArrowDownLeft, FileSpreadsheet, ClipboardList } from 'lucide-react';
 import axios from 'axios';
+import { getLocalDateString, getLocalTimeString } from '../utils/dateUtils';
 
 export default function StockIn() {
   const { user } = useContext(AuthContext);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Form states
+  // Form states initialized immediately with local date/time
   const [itemId, setItemId] = useState('');
   const [quantity, setQuantity] = useState('');
   const [supplier, setSupplier] = useState('');
   const [invoice, setInvoice] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
+  const [date, setDate] = useState(getLocalDateString);
+  const [time, setTime] = useState(getLocalTimeString);
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -34,14 +36,14 @@ export default function StockIn() {
     };
     fetchItems();
 
-    // Default date/time
-    const now = new Date();
-    setDate(now.toISOString().split('T')[0]);
-    setTime(now.toTimeString().split(' ')[0].substring(0, 5));
+    // Default local date/time
+    setDate(getLocalDateString());
+    setTime(getLocalTimeString());
   }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setError('');
     setSuccess('');
 
@@ -50,10 +52,17 @@ export default function StockIn() {
       return;
     }
 
+    const numQty = Number(quantity);
+    if (!numQty || numQty <= 0) {
+      setError('Please enter a valid quantity greater than 0.');
+      return;
+    }
+
     try {
+      setSubmitting(true);
       const response = await axios.post('/api/inventory/stock-in', {
         itemId,
-        quantity: Number(quantity),
+        quantity: numQty,
         supplier,
         invoice,
         receivedBy: user?.name || 'Admin',
@@ -63,16 +72,20 @@ export default function StockIn() {
       });
 
       if (response.data.success) {
-        setSuccess(`Successfully logged stock arrival! ${quantity} units added.`);
-        // Reset form except defaults
+        setSuccess(`Successfully logged stock arrival! ${numQty} units added.`);
+        // Reset form
         setItemId('');
         setQuantity('');
         setSupplier('');
         setInvoice('');
         setRemarks('');
+        setDate(getLocalDateString());
+        setTime(getLocalTimeString());
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to submit stock arrival.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -197,10 +210,15 @@ export default function StockIn() {
         <div className="flex justify-end pt-3">
           <button
             type="submit"
-            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer"
+            disabled={submitting}
+            className={`px-6 py-2.5 rounded-lg text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer ${
+              submitting
+                ? 'bg-emerald-400 cursor-not-allowed text-white shadow-none'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100'
+            }`}
           >
             <FileSpreadsheet className="w-4 h-4" />
-            Commit Stock In
+            {submitting ? 'Logging Stock In...' : 'Commit Stock In'}
           </button>
         </div>
       </form>

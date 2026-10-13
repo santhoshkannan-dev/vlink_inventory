@@ -67,7 +67,7 @@ export default function InventoryMaster() {
     totalItems: inventory.length,
     lowStock: inventory.filter(i => i.status === 'CRITICAL').length,
     outOfStock: inventory.filter(i => i.status === 'OUT OF STOCK').length,
-    inTransit: 520 // Preserved mockup benchmark placeholder data
+    healthyItems: inventory.filter(i => i.status === 'HEALTHY').length
   };
 
   // Open modal handlers
@@ -190,8 +190,8 @@ export default function InventoryMaster() {
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4 shadow-sm">
           <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><CheckCircle className="w-5 h-5" /></div>
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">In Transit</p>
-            <p className="text-xl font-extrabold font-mono text-slate-900 mt-0.5">{metrics.inTransit}</p>
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Healthy Stock</p>
+            <p className="text-xl font-extrabold font-mono text-slate-900 mt-0.5">{metrics.healthyItems}</p>
           </div>
         </div>
       </div>

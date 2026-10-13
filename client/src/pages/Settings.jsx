@@ -279,11 +279,9 @@ export default function Settings() {
                       return;
                     }
                     try {
-                      await axios.put(`/api/users/${user?._id}`, {
-                        name: user?.name,
-                        email: user?.email,
-                        role: user?.role,
-                        password: passwordForm.newPass
+                      await axios.put('/api/auth/update-password', {
+                        currentPassword: passwordForm.current,
+                        newPassword: passwordForm.newPass
                       });
                       toast.success('Password updated successfully');
                       setPasswordForm({ current: '', newPass: '', confirm: '' });

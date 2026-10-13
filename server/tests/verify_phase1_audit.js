@@ -12,6 +12,7 @@ import {
   processStockIn,
   processStockOut,
   deleteInventoryItem,
+  deleteBatchInventoryItems,
   getInventory
 } from '../controllers/inventoryController.js';
 import { createDailyEntry } from '../controllers/dailyEntryController.js';
@@ -130,7 +131,54 @@ const runPhase1AuditTests = async () => {
         currentStock: -10,
         minimumStock: 0
       });
-    } catch (err) {
+  
+    // -------------------------------------------------------------
+    // TEST 9: BATCH SELECT ALL & DELETE
+    // -------------------------------------------------------------
+    console.log('\n--- 9. Testing Batch Delete Endpoint ---');
+    const batchItem1 = await Inventory.create({
+      itemName: `Batch Item 1 ${timestamp}`,
+      category: 'Infrastructure',
+      unit: 'Nos',
+      currentStock: 10,
+      minimumStock: 2
+    });
+    // Create transaction for batchItem1 so it archives
+    await Transaction.create({
+      item: batchItem1._id,
+      quantity: 10,
+      type: 'IN',
+      user: 'Administrator',
+      date: '2026-10-13',
+      time: '12:00:00',
+      remarks: 'Batch test stock in'
+    });
+
+    const batchItem2 = await Inventory.create({
+      itemName: `Batch Item 2 ${timestamp}`,
+      category: 'Connectivity',
+      unit: 'Nos',
+      currentStock: 0,
+      minimumStock: 0
+    }); // No transactions, so it permanently deletes
+
+    const batchReq = {
+      body: { ids: [batchItem1._id.toString(), batchItem2._id.toString()] },
+      user: adminUser
+    };
+    const batchRes = createMockRes();
+    await deleteBatchInventoryItems(batchReq, batchRes);
+
+    assert(batchRes.statusCode === 200, 'Batch delete responded HTTP 200');
+    assert(batchRes.body.archivedCount === 1, 'Correctly archived item with history');
+    assert(batchRes.body.deletedCount === 1, 'Correctly permanently deleted item without history');
+
+    const checkArchived = await Inventory.findById(batchItem1._id);
+    assert(checkArchived && checkArchived.isArchived === true, 'Batch archived item preserved in database');
+    const checkDeleted = await Inventory.findById(batchItem2._id);
+    assert(checkDeleted === null, 'Batch deleted item removed from database');
+
+  } catch (err) {
       schemaValidationThrew = true;
     }
     assert(schemaValidationThrew, 'Mongoose Schema strictly rejects negative currentStock via min: 0 validator');
@@ -412,6 +460,53 @@ const runPhase1AuditTests = async () => {
     await getTransactions(filterInReq, filterInRes);
     const allIn = filterInRes.body.data.every(t => t.type === 'IN');
     assert(allIn, 'Type filter correctly restricts results exclusively to IN movements');
+
+
+    // -------------------------------------------------------------
+    // TEST 9: BATCH SELECT ALL & DELETE
+    // -------------------------------------------------------------
+    console.log('\n--- 9. Testing Batch Delete Endpoint ---');
+    const batchItem1 = await Inventory.create({
+      itemName: `Batch Item 1 ${timestamp}`,
+      category: 'Infrastructure',
+      unit: 'Nos',
+      currentStock: 10,
+      minimumStock: 2
+    });
+    // Create transaction for batchItem1 so it archives
+    await Transaction.create({
+      item: batchItem1._id,
+      quantity: 10,
+      type: 'IN',
+      user: 'Administrator',
+      date: '2026-10-13',
+      time: '12:00:00',
+      remarks: 'Batch test stock in'
+    });
+
+    const batchItem2 = await Inventory.create({
+      itemName: `Batch Item 2 ${timestamp}`,
+      category: 'Connectivity',
+      unit: 'Nos',
+      currentStock: 0,
+      minimumStock: 0
+    }); // No transactions, so it permanently deletes
+
+    const batchReq = {
+      body: { ids: [batchItem1._id.toString(), batchItem2._id.toString()] },
+      user: adminUser
+    };
+    const batchRes = createMockRes();
+    await deleteBatchInventoryItems(batchReq, batchRes);
+
+    assert(batchRes.statusCode === 200, 'Batch delete responded HTTP 200');
+    assert(batchRes.body.archivedCount === 1, 'Correctly archived item with history');
+    assert(batchRes.body.deletedCount === 1, 'Correctly permanently deleted item without history');
+
+    const checkArchived = await Inventory.findById(batchItem1._id);
+    assert(checkArchived && checkArchived.isArchived === true, 'Batch archived item preserved in database');
+    const checkDeleted = await Inventory.findById(batchItem2._id);
+    assert(checkDeleted === null, 'Batch deleted item removed from database');
 
   } catch (err) {
     console.error('Fatal error in test suite:', err);

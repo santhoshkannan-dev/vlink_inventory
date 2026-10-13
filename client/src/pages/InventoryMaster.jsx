@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Boxes, Edit3, AlertTriangle, CheckCircle, Flame, Search, Plus, Trash2 } from 'lucide-react';
 import axios from 'axios';
+import { toast } from 'react-toastify';
 
 export default function InventoryMaster() {
   const [inventory, setInventory] = useState([]);
@@ -10,6 +11,11 @@ export default function InventoryMaster() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [searchParams] = useSearchParams();
+
+  // Selection & Bulk Actions
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const selectAllRef = useRef(null);
 
   // Modal Control States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -101,17 +107,67 @@ export default function InventoryMaster() {
     setIsModalOpen(true);
   };
 
+  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(item => selectedIds.includes(item._id));
+  const someFilteredSelected = filteredItems.some(item => selectedIds.includes(item._id)) && !allFilteredSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someFilteredSelected;
+    }
+  }, [someFilteredSelected]);
+
+  const handleToggleSelectAll = () => {
+    if (allFilteredSelected) {
+      const filteredIdSet = new Set(filteredItems.map(i => i._id));
+      setSelectedIds(prev => prev.filter(id => !filteredIdSet.has(id)));
+    } else {
+      const newSelected = new Set([...selectedIds, ...filteredItems.map(i => i._id)]);
+      setSelectedIds(Array.from(newSelected));
+    }
+  };
+
+  const handleToggleSelectItem = (id) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
   const handleDeleteItem = async (itemId) => {
-    if (!window.confirm('Are you sure you want to delete this inventory item? Related transaction logs will also be deleted.')) {
+    const item = inventory.find(i => i._id === itemId);
+    const name = item?.itemName || 'this inventory item';
+    if (!window.confirm(`Are you sure you want to delete "${name}"? Historical stock transactions will be safely preserved in the audit log.`)) {
       return;
     }
     try {
       const response = await axios.delete(`/api/inventory/${itemId}`);
       if (response.data.success) {
-        setInventory(prev => prev.filter(i => i._id !== itemId));
+        setSelectedIds(prev => prev.filter(i => i !== itemId));
+        toast.success(response.data.message || 'Item deleted successfully.');
+        await fetchInventoryData();
       }
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to delete inventory item.');
+      toast.error(err.response?.data?.message || 'Failed to delete inventory item.');
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    const count = selectedIds.length;
+    if (!window.confirm(`Are you sure you want to delete ${count} selected item${count > 1 ? 's' : ''}? Items with historical transactions will be safely archived to preserve the audit trail.`)) {
+      return;
+    }
+    setIsBulkDeleting(true);
+    try {
+      const res = await axios.post('/api/inventory/batch-delete', { ids: selectedIds });
+      if (res.data.success) {
+        toast.success(res.data.message || `Deleted ${count} item(s) successfully.`);
+        setSelectedIds([]);
+        await fetchInventoryData();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete selected items.');
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -155,6 +211,16 @@ export default function InventoryMaster() {
         
         {/* Actions Cluster */}
         <div className="flex flex-wrap items-center gap-2 md:gap-3">
+          {selectedIds.length > 0 && (
+            <button 
+              onClick={handleDeleteSelected}
+              disabled={isBulkDeleting}
+              className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer animate-fadeIn"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> 
+              {isBulkDeleting ? 'Deleting...' : `Delete Selected (${selectedIds.length})`}
+            </button>
+          )}
           <button 
             onClick={handleOpenAddModal}
             className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
@@ -226,12 +292,48 @@ export default function InventoryMaster() {
           </div>
         </div>
 
+        {/* SELECTED ITEMS STATUS BAR */}
+        {selectedIds.length > 0 && (
+          <div className="px-6 py-2.5 bg-blue-50/90 border-b border-blue-100 flex items-center justify-between text-xs text-blue-900 transition-all">
+            <div className="flex items-center gap-2 font-semibold">
+              <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
+              <span>{selectedIds.length} of {inventory.length} item{selectedIds.length > 1 ? 's' : ''} selected</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSelectedIds([])}
+                className="text-xs font-semibold text-slate-600 hover:text-slate-900 px-2 py-1 rounded hover:bg-white transition-colors cursor-pointer"
+              >
+                Clear Selection
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={isBulkDeleting}
+                className="text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded-md shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <Trash2 className="w-3 h-3" />
+                {isBulkDeleting ? 'Deleting...' : `Delete (${selectedIds.length})`}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* PRIMARY LEDGER SCHEMATIC DATA TABLE */}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                <th className="py-3 px-6 w-4"><input type="checkbox" className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" /></th>
+                <th className="py-3 px-6 w-4">
+                  <input 
+                    ref={selectAllRef}
+                    type="checkbox" 
+                    checked={allFilteredSelected}
+                    onChange={handleToggleSelectAll}
+                    disabled={filteredItems.length === 0}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer" 
+                    title="Select All"
+                  />
+                </th>
                 <th className="py-3 px-6 text-slate-600">Item Name</th>
                 <th className="py-3 px-6 text-slate-600">Category</th>
                 <th className="py-3 px-6 text-slate-600">Unit</th>
@@ -244,8 +346,22 @@ export default function InventoryMaster() {
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredItems.map((item) => (
-                <tr key={item._id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-6"><input type="checkbox" className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" /></td>
+                <tr 
+                  key={item._id} 
+                  className={`transition-colors ${
+                    selectedIds.includes(item._id) 
+                      ? 'bg-blue-50/50 hover:bg-blue-50/80' 
+                      : 'hover:bg-slate-50/80'
+                  }`}
+                >
+                  <td className="py-3 px-6">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedIds.includes(item._id)}
+                      onChange={() => handleToggleSelectItem(item._id)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer" 
+                    />
+                  </td>
                   <td className="py-3 px-6 font-bold text-slate-900">{item.itemName}</td>
                   <td className="py-3 px-6 font-medium text-slate-500">{item.category}</td>
                   <td className="py-3 px-6 font-medium text-slate-400 font-mono">{item.unit}</td>

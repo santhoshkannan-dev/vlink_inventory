@@ -6,7 +6,8 @@ import {
   getAlerts,
   createInventoryItem,
   updateInventoryItem,
-  deleteInventoryItem
+  deleteInventoryItem,
+  deleteBatchInventoryItems
 } from '../controllers/inventoryController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
@@ -17,6 +18,8 @@ router.get('/', protect, authorize('Admin', 'Staff'), getInventory);
 
 // ONLY Admins can create, update, or delete/archive catalog items
 router.post('/', protect, authorize('Admin'), createInventoryItem);
+router.post('/batch-delete', protect, authorize('Admin'), deleteBatchInventoryItems);
+router.delete('/batch', protect, authorize('Admin'), deleteBatchInventoryItems);
 router.put('/:id', protect, authorize('Admin'), updateInventoryItem);
 router.delete('/:id', protect, authorize('Admin'), deleteInventoryItem);
 

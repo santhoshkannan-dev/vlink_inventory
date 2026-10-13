@@ -324,6 +324,40 @@ export const deleteInventoryItem = async (req, res) => {
   }
 };
 
+// Bulk delete or archive inventory items
+export const deleteBatchInventoryItems = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please provide an array of item IDs to delete.' });
+    }
 
+    let archivedCount = 0;
+    let deletedCount = 0;
 
+    for (const id of ids) {
+      const item = await Inventory.findById(id);
+      if (!item) continue;
 
+      const hasTransactions = await Transaction.exists({ item: id });
+      if (hasTransactions) {
+        item.isArchived = true;
+        item.archivedAt = new Date();
+        await item.save();
+        archivedCount++;
+      } else {
+        await Inventory.findByIdAndDelete(id);
+        deletedCount++;
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Processed ${ids.length} item(s): ${deletedCount} deleted, ${archivedCount} archived to preserve audit history.`,
+      deletedCount,
+      archivedCount
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
